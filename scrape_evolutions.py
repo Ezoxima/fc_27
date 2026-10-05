@@ -16,10 +16,12 @@ import re
 import sqlite3
 import sys
 import time
+from datetime import datetime, timezone
 
 import requests
 from bs4 import BeautifulSoup
 
+from evo_levels import ensure_level_columns, parse_levels_from_html
 from playstyles import PLAY_STYLE_NAMES
 
 KNOWN_PLAYSTYLE_NAMES = set(PLAY_STYLE_NAMES.values())
@@ -41,6 +43,7 @@ CREATE TABLE IF NOT EXISTS evolutions (
     requirements_json TEXT,        -- {"overall_max": 79, "position_in": ["ST"], "position_excluded": [...], ...}
     upgrades_text TEXT,            -- texte brut des gains
     upgrades_json TEXT,            -- [{"stat": "OVR", "delta": 5}, ...] (branche principale)
+    levels_json TEXT,              -- paliers et options (cf. evo_levels.py)
     coin_cost INTEGER,             -- cout en pieces FUT (NULL/0 si gratuite)
     point_cost INTEGER,            -- cout en FC Points (NULL/0 si gratuite)
     granted_playstyles TEXT,       -- liste JSON des PlayStyles accordes (pas visible sur la page liste,
@@ -59,7 +62,10 @@ CREATE TABLE IF NOT EXISTS used_evolutions (
     player_ea_id INTEGER,           -- id EA du joueur evolue (fiable, pas ambigu comme le nom)
     player_name TEXT,               -- copie du nom au moment de l'enregistrement (lisibilite)
     date_applied TEXT DEFAULT CURRENT_TIMESTAMP,
-    notes TEXT
+    notes TEXT,
+    level INTEGER,                  -- paliers termines (NULL = evolution terminee)
+    max_level INTEGER,
+    path_choices TEXT               -- JSON : option choisie par palier, ex. [1, 1, 3]
 );
 """
 
@@ -197,7 +203,9 @@ def parse_upgrades(container) -> list[dict]:
 REPEATABILITY_RE = re.compile(r"repeatabilityCount:(-?\d+)")
 
 
-def scrape_detail_page_extras(url: str, session: requests.Session) -> tuple[list[str], int | None]:
+def scrape_detail_page_extras(
+    url: str, session: requests.Session
+) -> tuple[list[str], int | None, list[dict] | None]:
     """Deux infos ne sont visibles QUE sur la page detail de l'evolution (pas
     sur la page liste /evolutions/) :
     - les PlayStyles accordes : une icone (div title="<Nom du PlayStyle>",
@@ -211,7 +219,7 @@ def scrape_detail_page_extras(url: str, session: requests.Session) -> tuple[list
         resp.raise_for_status()
         html = resp.text
     except requests.RequestException:
-        return [], None
+        return [], None, None
 
     soup = BeautifulSoup(html, "html.parser")
     names = {
@@ -223,7 +231,7 @@ def scrape_detail_page_extras(url: str, session: requests.Session) -> tuple[list
     m = REPEATABILITY_RE.search(html)
     repeatability_count = int(m.group(1)) if m else None
 
-    return sorted(names), repeatability_count
+    return sorted(names), repeatability_count, parse_levels_from_html(html)
 
 
 OBJECTIVE_LINK_RE = re.compile(r"/objectives/[a-z-]+/(\d+)-([a-z0-9-]+)/")
@@ -328,8 +336,29 @@ def scrape_evolution_detail_page(evo_id: int, slug: str, session: requests.Sessi
     }
 
 
+END_TIME_RE = re.compile(r'endTime:"([^"]+)"')
+
+
+def evolution_is_live(url: str, session: requests.Session) -> bool:
+    """Vrai si la page detail annonce une date de fin (endTime) dans le futur."""
+    try:
+        resp = session.get(url, headers=HEADERS, timeout=30)
+        resp.raise_for_status()
+    except requests.RequestException:
+        return False
+    m = END_TIME_RE.search(resp.text)
+    if not m:
+        return False
+    try:
+        end = datetime.fromisoformat(m.group(1).replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return end > datetime.now(timezone.utc)
+
+
 def discover_objective_evolutions(
-    conn: sqlite3.Connection, session: requests.Session, known_ids: set[int]
+    conn: sqlite3.Connection, session: requests.Session, known_ids: set[int],
+    current_ids: set[int] | None = None,
 ) -> list[int]:
     """Parcourt toutes les pages d'objectifs a la recherche d'evolutions qui
     n'apparaissent pas dans le scrape normal de /evolutions/ (recompenses de
@@ -348,13 +377,23 @@ def discover_objective_evolutions(
     new_ids: list[int] = []
     for evo_id, evo_slug in found.items():
         if evo_id in known_ids:
+            # deja en base : elle n'est pas dans /evolutions/ (sinon elle serait
+            # deja active), donc on verifie sa date de fin avant de la laisser expirer.
+            if current_ids is not None and evo_id not in current_ids:
+                url = f"{BASE}/evolutions/{evo_id}-{evo_slug}/"
+                if evolution_is_live(url, session):
+                    conn.execute("UPDATE evolutions SET active = 1 WHERE id = ?", (evo_id,))
+                    conn.commit()
+                    new_ids.append(evo_id)
+                    print(f"  = {evo_slug} (id={evo_id}) toujours active [source: objectif]")
+                time.sleep(0.2)
             continue
         card = scrape_evolution_detail_page(evo_id, evo_slug, session)
         if card is None:
             print(f"  echec scraping evolution id={evo_id} ({evo_slug})", file=sys.stderr)
             continue
-        granted_ps, repeatability_count = scrape_detail_page_extras(card["url"], session)
-        detail = build_record(card, granted_ps, repeatability_count)
+        granted_ps, repeatability_count, levels = scrape_detail_page_extras(card["url"], session)
+        detail = build_record(card, granted_ps, repeatability_count, levels)
         upsert_evolution(conn, detail)
         conn.commit()
         new_ids.append(evo_id)
@@ -366,7 +405,10 @@ def discover_objective_evolutions(
     return new_ids
 
 
-def build_record(card: dict, granted_playstyles: list[str], repeatability_count: int | None) -> dict:
+def build_record(
+    card: dict, granted_playstyles: list[str], repeatability_count: int | None,
+    levels: list[dict] | None = None,
+) -> dict:
     req_container = card["req_container"]
     upg_container = card["upg_container"]
     requirements_json = parse_requirements(req_container)
@@ -381,6 +423,7 @@ def build_record(card: dict, granted_playstyles: list[str], repeatability_count:
         "requirements_json": json.dumps(requirements_json, ensure_ascii=False),
         "upgrades_text": upg_container.get_text(" ", strip=True) if upg_container else None,
         "upgrades_json": json.dumps(upgrades_json, ensure_ascii=False),
+        "levels_json": json.dumps(levels, ensure_ascii=False) if levels else None,
         "coin_cost": card["coin_cost"],
         "point_cost": card["point_cost"],
         "granted_playstyles": json.dumps(granted_playstyles, ensure_ascii=False),
@@ -394,11 +437,11 @@ def upsert_evolution(conn: sqlite3.Connection, e: dict) -> None:
     conn.execute(
         """
         INSERT INTO evolutions (id, slug, name, description, requirements_text,
-                                 requirements_json, upgrades_text, upgrades_json,
+                                 requirements_json, upgrades_text, upgrades_json, levels_json,
                                  coin_cost, point_cost, granted_playstyles,
                                  repeatability_count, active, url)
         VALUES (:id, :slug, :name, :description, :requirements_text,
-                :requirements_json, :upgrades_text, :upgrades_json,
+                :requirements_json, :upgrades_text, :upgrades_json, :levels_json,
                 :coin_cost, :point_cost, :granted_playstyles,
                 :repeatability_count, :active, :url)
         ON CONFLICT(id) DO UPDATE SET
@@ -407,6 +450,7 @@ def upsert_evolution(conn: sqlite3.Connection, e: dict) -> None:
             requirements_json=excluded.requirements_json,
             upgrades_text=excluded.upgrades_text,
             upgrades_json=excluded.upgrades_json,
+            levels_json=COALESCE(excluded.levels_json, evolutions.levels_json),
             coin_cost=excluded.coin_cost,
             point_cost=excluded.point_cost,
             granted_playstyles=excluded.granted_playstyles,
@@ -416,6 +460,25 @@ def upsert_evolution(conn: sqlite3.Connection, e: dict) -> None:
         """,
         e,
     )
+
+
+def backfill_levels(conn: sqlite3.Connection, session: requests.Session) -> None:
+    """Complete les paliers des evolutions deja en base qui n'en ont pas
+    (expirees : jamais re-scrapees depuis la liste, ou base anterieure aux paliers)."""
+    rows = conn.execute("SELECT id, url FROM evolutions WHERE levels_json IS NULL AND url IS NOT NULL").fetchall()
+    for evo_id, url in rows:
+        try:
+            _, _, levels = scrape_detail_page_extras(url, session)
+        except Exception as exc:  # noqa: BLE001
+            print(f"  paliers id={evo_id} ECHEC: {exc}", file=sys.stderr)
+            continue
+        if levels:
+            conn.execute("UPDATE evolutions SET levels_json = ? WHERE id = ?",
+                         (json.dumps(levels, ensure_ascii=False), evo_id))
+            print(f"  paliers recuperes pour id={evo_id}")
+        else:
+            print(f"  paliers introuvables pour id={evo_id} (page retiree ?)")
+        time.sleep(0.3)
 
 
 def main() -> None:
@@ -430,6 +493,7 @@ def main() -> None:
 
     conn = sqlite3.connect(args.out)
     conn.executescript(SCHEMA)
+    ensure_level_columns(conn)
 
     session = requests.Session()
     cards = list_evolution_cards(session)
@@ -444,8 +508,8 @@ def main() -> None:
     current_ids = []
     for i, card in enumerate(cards, start=1):
         try:
-            granted_ps, repeatability_count = scrape_detail_page_extras(card["url"], session)
-            detail = build_record(card, granted_ps, repeatability_count)
+            granted_ps, repeatability_count, levels = scrape_detail_page_extras(card["url"], session)
+            detail = build_record(card, granted_ps, repeatability_count, levels)
             upsert_evolution(conn, detail)
             conn.commit()
             current_ids.append(card["id"])
@@ -458,7 +522,7 @@ def main() -> None:
 
     if not args.skip_objectives:
         known_ids = {row[0] for row in conn.execute("SELECT id FROM evolutions")}
-        current_ids.extend(discover_objective_evolutions(conn, session, known_ids))
+        current_ids.extend(discover_objective_evolutions(conn, session, known_ids, set(current_ids)))
 
     expired = conn.execute(
         "SELECT id, name FROM evolutions WHERE active = 0 AND id NOT IN ({})".format(
@@ -468,6 +532,8 @@ def main() -> None:
     ).fetchall() if current_ids else []
     for eid, ename in expired:
         print(f"  (expiree, retiree des rapports : {ename} id={eid})")
+
+    backfill_levels(conn, session)
 
     conn.commit()
     print(f"Termine. {len(cards)} evolutions actives enregistrees dans {args.out}")

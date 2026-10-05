@@ -22,6 +22,8 @@ from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.filters import FilterColumn, Filters
 
+from evo_levels import ensure_level_columns, select_upgrades
+
 # Filtre "Club" pre-applique par defaut sur chaque onglet (demande utilisateur :
 # Ligue 1 -> PSG/OL, LaLiga -> Real Madrid/FC Barcelone, Bundesliga -> Bayern/
 # Dortmund/Leipzig/Leverkusen). Le filtre auto reste modifiable dans Excel.
@@ -40,7 +42,7 @@ STAT_ALIASES = {
     "Att. Pos.": "shooting",
     "PAS": "passing", "Vision": "passing", "Short Pass": "passing", "Long Pass": "passing",
     "Crossing": "passing", "Curve": "passing", "Fk Acc.": "passing",
-    "DRI": "dribbling", "Ball Control": "dribbling", "Agility": "dribbling",
+    "DRI": "dribbling", "Ball Control": "dribbling", "Agility": "dribbling", "Dribbling": "dribbling",
     "Balance": "dribbling", "Composure": "dribbling", "Reactions": "dribbling",
     "DEF": "defending", "Stand Tackle": "defending", "Slide Tackle": "defending",
     "Interceptions": "defending", "Def. Aware.": "defending", "Heading Acc.": "defending",
@@ -65,7 +67,9 @@ CATEGORY_SUBSTATS = {
 
 # Poids reels utilises par EA pour deriver une note principale (Pace, Shooting,
 # ...) a partir de ses sous-stats detaillees (source : fifauteam.com/fc-27-attributes,
-# recoupe empiriquement sur des cartes avant/apres evolution reelles). Ce n'est
+# puis verifies par regression sur les ~17 700 cartes de champ de la base : avec
+# l'arrondi a l'entier superieur des .5 ("half-up"), 100 % des notes principales
+# sont reproduites exactement). Ce n'est
 # PAS une moyenne equiponderee : ex. Fk Acc. ne pese que 5% dans Passing alors
 # que Short Pass pese 35%. Une moyenne simple surestime l'effet des sous-stats
 # a faible poids (souvent celles qui recoivent les plus gros gains d'evolution,
@@ -81,8 +85,8 @@ CATEGORY_WEIGHTS = {
         "Short Pass": 0.35, "Long Pass": 0.15, "Curve": 0.05,
     },
     "dribbling": {
-        "Agility": 0.10, "Balance": 0.05, "Reactions": 0.0,
-        "Ball Control": 0.35, "Dribbling": 0.50, "Composure": 0.0,
+        "Agility": 0.10, "Balance": 0.05, "Reactions": 0.05,
+        "Ball Control": 0.30, "Dribbling": 0.45, "Composure": 0.05,
     },
     "defending": {
         "Interceptions": 0.20, "Heading Acc.": 0.10, "Def. Aware.": 0.30,
@@ -107,6 +111,39 @@ DETAIL_LABEL_ALIASES = {
 }
 
 
+# Gardiens : 6 notes principales (DIV HAN KIC REF SPD POS) = sous-stats directes,
+# sauf SPD (Speed) = 60 % Acceleration + 40 % Sprint Speed (verifie sur 2 200
+# gardiens, arrondi half-up). Reactions n'entre dans aucune note principale.
+GK_MAINS = [
+    ("DIV", "Diving"), ("HAN", "Handling"), ("KIC", "Kicking"),
+    ("REF", "Reflexes"), ("SPD", "Speed"), ("POS", "Positioning"),
+]
+GK_SPEED_WEIGHTS = {"Acceleration": 60, "Sprint Speed": 40}
+
+# noms de categories cote simulateur (JS) <-> cote Python
+JS_CATEGORY_NAMES = {
+    "pace": "pace", "shooting": "sho", "passing": "pas",
+    "dribbling": "dri", "defending": "def", "physicality": "phy",
+}
+
+
+def js_constants() -> dict:
+    """Constantes de calcul partagees avec le simulateur (une seule source de verite)."""
+    return {
+        "categorySubstats": {JS_CATEGORY_NAMES[k]: v for k, v in CATEGORY_SUBSTATS.items()},
+        "categoryWeights": {
+            JS_CATEGORY_NAMES[k]: {s: round(w * 100) for s, w in ws.items()}
+            for k, ws in CATEGORY_WEIGHTS.items()
+        },
+        "statAliases": {
+            k: JS_CATEGORY_NAMES[v] for k, v in STAT_ALIASES.items() if v in JS_CATEGORY_NAMES
+        },
+        "detailLabelAliases": DETAIL_LABEL_ALIASES,
+        "gkMains": GK_MAINS,
+        "gkSpeedWeights": GK_SPEED_WEIGHTS,
+    }
+
+
 def parse_alt_positions(raw) -> list:
     """Lit `alternative_positions` : JSON, ou repr Python (anciennes lignes)."""
     if not raw or raw == "None":
@@ -121,6 +158,7 @@ def parse_alt_positions(raw) -> list:
 
 
 def load_evolutions(conn: sqlite3.Connection, include_inactive: bool = False) -> list[dict]:
+    ensure_level_columns(conn)
     query = "SELECT * FROM evolutions"
     if not include_inactive:
         query += " WHERE active = 1"
@@ -142,6 +180,16 @@ def load_evolutions(conn: sqlite3.Connection, include_inactive: bool = False) ->
         evo["used_count"] = used
         evo["remaining_uses"] = max(0, limit - used)
     return evolutions
+
+
+def evolution_gains(
+    evo: dict, levels_done: int | None = None, choices: list[int] | None = None
+) -> tuple[list[dict], list[str]]:
+    """(gains, PlayStyles) d'une evolution pour un nombre de paliers termines et
+    des choix d'options. Sans paliers en base, repli sur la liste a plat."""
+    if evo.get("levels_json"):
+        return select_upgrades(json.loads(evo["levels_json"]), levels_done, choices)
+    return json.loads(evo.get("upgrades_json") or "[]"), json.loads(evo.get("granted_playstyles") or "[]")
 
 
 def available_evolutions(evolutions: list[dict]) -> list[dict]:
@@ -212,14 +260,17 @@ def apply_upgrades(
     overall_delta = 0
     weak_foot = player.get("weak_foot")
     skill_moves = player.get("skill_moves")
+    is_gk = player.get("position") == "GK"
 
     for u in upgrades:
         stat, delta, cap = u["stat"], u["delta"], u.get("result_value")
 
         if stat == "OVR":
-            new_val = player["overall"] + delta
+            # cumul : une evolution a paliers peut gagner de la note a plusieurs paliers
+            current_ovr = player["overall"] + overall_delta
+            new_val = current_ovr + delta
             if cap is not None:
-                new_val = max(player["overall"], min(new_val, cap))
+                new_val = max(current_ovr, min(new_val, cap))
             overall_delta = new_val - player["overall"]
             continue
         if stat == "WF":
@@ -233,8 +284,10 @@ def apply_upgrades(
                 skill_moves = max(skill_moves, min(new_val, cap)) if cap is not None else new_val
             continue
 
-        label = DETAIL_LABEL_ALIASES.get(stat, stat)
-        category = STAT_ALIASES.get(label)
+        # GK : "POS" (gk_face_positioning) est la sous-stat Positioning du gardien,
+        # et aucune sous-stat n'alimente les notes de champ (Reactions != Dribbling).
+        label = "Positioning" if (is_gk and stat == "POS") else DETAIL_LABEL_ALIASES.get(stat, stat)
+        category = None if is_gk else STAT_ALIASES.get(label)
         current = detail_values.get(label)
         if isinstance(current, int):
             new_val = current + delta
@@ -267,9 +320,12 @@ def apply_upgrades(
         weighted_value = None
         if weights and substats:
             try:
-                weighted_value = round(
-                    sum(weights.get(s, 0.0) * int(after_detail[s]) for s in substats)
+                # poids en pourcents entiers + arrondi half-up (round() Python
+                # arrondit les .5 vers le pair, EA vers le haut)
+                weighted_total = sum(
+                    round(weights.get(s, 0.0) * 100) * int(after_detail[s]) for s in substats
                 )
+                weighted_value = (weighted_total + 50) // 100
             except (KeyError, TypeError, ValueError):
                 # sous-stat detaillee manquante (carte pas entierement scrapee) :
                 # on retombe sur l'approximation par delta ci-dessous.
@@ -288,6 +344,13 @@ def apply_upgrades(
         else:
             avg = round(sum(touched_deltas.values()) / len(touched_deltas))
             after_main[field] = player[field] + avg
+
+    if is_gk and "Speed" in after_detail:
+        try:
+            total = sum(w * int(after_detail[s]) for s, w in GK_SPEED_WEIGHTS.items())
+            after_detail["Speed"] = str((total + 50) // 100)
+        except (KeyError, ValueError):
+            pass
 
     if granted_playstyles:
         existing = set(player.get("ps_plus") or []) | set(player.get("ps_normal") or [])

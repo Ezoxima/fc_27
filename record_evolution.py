@@ -14,16 +14,24 @@ Usage:
     python record_evolution.py --undo 4                   # annuler l'enregistrement id=4 (erreur de saisie)
 """
 import argparse
+import json
 import sqlite3
 
+from evo_levels import ensure_level_columns
 from evolution_report import load_evolutions, load_players
 from simulate_evolution import find_matches, print_player_choice
 
 
-def record(conn: sqlite3.Connection, evolution_id: int, player_ea_id: int, player_name: str, notes: str | None) -> None:
+def record(
+    conn: sqlite3.Connection, evolution_id: int, player_ea_id: int, player_name: str, notes: str | None,
+    path_choices: list[int] | None = None,
+) -> None:
+    """path_choices : option choisie a chaque palier (Pathway), ex. [1, 1, 3]."""
+    ensure_level_columns(conn)
     conn.execute(
-        "INSERT INTO used_evolutions (evolution_id, player_ea_id, player_name, notes) VALUES (?, ?, ?, ?)",
-        (evolution_id, player_ea_id, player_name, notes),
+        "INSERT INTO used_evolutions (evolution_id, player_ea_id, player_name, notes, path_choices) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (evolution_id, player_ea_id, player_name, notes, json.dumps(path_choices) if path_choices else None),
     )
     conn.commit()
 

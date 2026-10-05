@@ -15,6 +15,7 @@ import json
 import sqlite3
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
+from evo_levels import ensure_level_columns
 from evolution_report import load_evolutions
 from record_evolution import record
 
@@ -33,9 +34,11 @@ def usage_payload(evo: dict) -> dict:
 
 
 def load_history(conn: sqlite3.Connection) -> list[dict]:
+    ensure_level_columns(conn)
     rows = conn.execute(
         """
-        SELECT u.id, u.evolution_id, e.name, u.player_name, u.player_ea_id, u.date_applied, u.notes
+        SELECT u.id, u.evolution_id, e.name, u.player_name, u.player_ea_id, u.date_applied, u.notes,
+               u.level, u.max_level, u.path_choices
         FROM used_evolutions u
         JOIN evolutions e ON e.id = u.evolution_id
         ORDER BY u.date_applied DESC, u.id DESC
@@ -50,8 +53,11 @@ def load_history(conn: sqlite3.Connection) -> list[dict]:
             "playerEaId": ea_id,
             "dateApplied": date,
             "notes": notes,
+            "level": level,
+            "maxLevel": max_level,
+            "pathChoices": json.loads(choices) if choices else None,
         }
-        for uid, evo_id, evo_name, player_name, ea_id, date, notes in rows
+        for uid, evo_id, evo_name, player_name, ea_id, date, notes, level, max_level, choices in rows
     ]
 
 
@@ -173,6 +179,12 @@ class Handler(SimpleHTTPRequestHandler):
         player_name = body.get("playerName")
         player_ea_id = body.get("playerEaId")
         notes = body.get("notes")
+        path_choices = body.get("pathChoices")
+        if path_choices is not None and not (
+            isinstance(path_choices, list) and all(isinstance(c, int) and c > 0 for c in path_choices)
+        ):
+            self._send_json(400, {"ok": False, "error": "pathChoices invalide"})
+            return
 
         if not evolution_id or not player_name:
             self._send_json(400, {"ok": False, "error": "evolutionId et playerName sont requis"})
@@ -186,7 +198,7 @@ class Handler(SimpleHTTPRequestHandler):
                 self._send_json(404, {"ok": False, "error": f"evolution id={evolution_id} introuvable"})
                 return
 
-            record(conn, evolution_id, player_ea_id, player_name, notes)
+            record(conn, evolution_id, player_ea_id, player_name, notes, path_choices)
 
             updated = load_evolutions(conn, include_inactive=True)
             evo = next(e for e in updated if e["id"] == evolution_id)

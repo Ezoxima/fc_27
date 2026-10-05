@@ -10,7 +10,7 @@ import argparse
 import json
 import sqlite3
 
-from evolution_report import load_evolutions, parse_alt_positions
+from evolution_report import js_constants, load_evolutions, parse_alt_positions
 
 MAIN_STAT_FIELDS = ["pace", "shooting", "passing", "dribbling", "defending", "physicality"]
 MAIN_LABELS = {"Pace", "Shooting", "Passing", "Dribbling", "Defending", "Physical"}
@@ -100,6 +100,8 @@ def export_evolutions(conn: sqlite3.Connection) -> list[dict]:
                 "req": json.loads(e["requirements_json"] or "{}"),
                 "upgrades": json.loads(e["upgrades_json"] or "[]"),
                 "grantedPlaystyles": json.loads(e.get("granted_playstyles") or "[]"),
+                # paliers et options (Pathway) ; None = evolution sans detail de paliers
+                "levels": json.loads(e["levels_json"]) if e.get("levels_json") else None,
                 "repeatabilityCount": e.get("repeatability_count") or 1,
                 "usedCount": e["used_count"],
                 "remainingUses": e["remaining_uses"],
@@ -116,6 +118,7 @@ def main() -> None:
 
     conn = sqlite3.connect(args.db)
     data = {
+        "meta": js_constants(),
         "evolutions": export_evolutions(conn),
         "players": export_players(conn),
     }

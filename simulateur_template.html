@@ -339,6 +339,8 @@
   }
   .undo-btn:hover { background: rgba(224,85,79,0.15); }
   #toggleUnavailable:disabled { opacity: 0.45; cursor: not-allowed; }
+  .choice-row { margin: 6px 0 10px; font-size: 13px; }
+  .choice-row select { margin-left: 6px; max-width: 100%; }
 
   .player-link {
     background: transparent;
@@ -473,71 +475,13 @@
 const DATA = /*__DATA__*/;
 
 const CATEGORY_LABELS = { pace: "Pace", sho: "Shooting", pas: "Passing", dri: "Dribbling", def: "Defending", phy: "Physical" };
-const CATEGORY_SUBSTATS = {
-  pace: ["Acceleration", "Sprint Speed"],
-  sho: ["Att. Pos.", "Finishing", "Shot Power", "Long Shots", "Volleys", "Penalties"],
-  pas: ["Vision", "Crossing", "Fk Acc.", "Short Pass", "Long Pass", "Curve"],
-  dri: ["Agility", "Balance", "Reactions", "Ball Control", "Dribbling", "Composure"],
-  def: ["Interceptions", "Heading Acc.", "Def. Aware.", "Stand Tackle", "Slide Tackle"],
-  phy: ["Jumping", "Stamina", "Strength", "Aggression"],
-};
-// GK: jeu de sous-stats different (pas de vraies evolutions GK actives pour l'instant,
-// mais on affiche quand meme ce qu'on a plutot que rien).
-const GK_CATEGORY_SUBSTATS = {
-  pace: ["Acceleration", "Sprint Speed"],
-  sho: [], pas: [], dri: [],
-  def: ["Diving", "Handling", "Kicking", "Reflexes", "Positioning"],
-  phy: ["Reactions"],
-};
-// Poids reels utilises par EA pour deriver une note principale a partir de ses
-// sous-stats (source : fifauteam.com/fc-27-attributes, recoupe empiriquement
-// sur des cartes avant/apres evolution reelles). Pas de moyenne equiponderee :
-// ex. Fk Acc. ne pese que 5% dans Passing alors que Short Pass pese 35% - une
-// moyenne simple surestime l'effet des sous-stats a faible poids (souvent
-// celles qui recoivent les plus gros gains d'evolution).
-const CATEGORY_WEIGHTS = {
-  pace: { "Acceleration": 0.45, "Sprint Speed": 0.55 },
-  sho: {
-    "Att. Pos.": 0.05, "Finishing": 0.45, "Shot Power": 0.20,
-    "Long Shots": 0.20, "Volleys": 0.05, "Penalties": 0.05,
-  },
-  pas: {
-    "Vision": 0.20, "Crossing": 0.20, "Fk Acc.": 0.05,
-    "Short Pass": 0.35, "Long Pass": 0.15, "Curve": 0.05,
-  },
-  dri: {
-    "Agility": 0.10, "Balance": 0.05, "Reactions": 0.0,
-    "Ball Control": 0.35, "Dribbling": 0.50, "Composure": 0.0,
-  },
-  def: {
-    "Interceptions": 0.20, "Heading Acc.": 0.10, "Def. Aware.": 0.30,
-    "Stand Tackle": 0.30, "Slide Tackle": 0.10,
-  },
-  phy: {
-    "Jumping": 0.05, "Stamina": 0.25, "Strength": 0.50, "Aggression": 0.20,
-  },
-};
-
-const STAT_ALIASES = {
-  "PAC": "pace", "Sprint Speed": "pace", "Acceleration": "pace",
-  "SHO": "sho", "Finishing": "sho", "Shot Power": "sho", "Long Shots": "sho",
-  "Penalties": "sho", "Volleys": "sho", "Att. Pos.": "sho",
-  "PAS": "pas", "Vision": "pas", "Short Pass": "pas", "Long Pass": "pas",
-  "Crossing": "pas", "Curve": "pas", "Fk Acc.": "pas",
-  "DRI": "dri", "Ball Control": "dri", "Agility": "dri", "Balance": "dri",
-  "Composure": "dri", "Reactions": "dri", "Dribbling": "dri",
-  "DEF": "def", "Stand Tackle": "def", "Slide Tackle": "def", "Interceptions": "def",
-  "Def. Aware.": "def", "Heading Acc.": "def",
-  "PHY": "phy", "Strength": "phy", "Stamina": "phy", "Aggression": "phy", "Jumping": "phy",
-};
-const DETAIL_LABEL_ALIASES = {
-  "Positioning": "Att. Pos.",
-  "Fk Accuracy": "Fk Acc.",
-  "Defensive Awareness": "Def. Aware.",
-  "Standing Tackle": "Stand Tackle",
-  "Sliding Tackle": "Slide Tackle",
-  "Heading Accuracy": "Heading Acc.",
-};
+// Constantes de calcul exportees par evolution_report.js_constants() (une seule
+// source de verite cote Python) : sous-stats, poids EA en pourcents, alias.
+const META = DATA.meta;
+const CATEGORY_SUBSTATS = META.categorySubstats;
+const CATEGORY_WEIGHTS = META.categoryWeights;
+const STAT_ALIASES = META.statAliases;
+const DETAIL_LABEL_ALIASES = META.detailLabelAliases;
 
 function statColor(v) {
   if (v >= 85) return "#3ecf6e";
@@ -577,12 +521,15 @@ function applyUpgrades(p, upgrades, grantedPlaystyles) {
   const catDeltas = {};
   let overallDelta = 0;
   let wf = p.wf, sm = p.sm;
+  const isGk = p.pos === "GK";
 
   for (const u of upgrades) {
     const stat = u.stat, delta = u.delta, cap = u.result_value;
     if (stat === "OVR") {
-      let nv = p.ovr + delta;
-      if (cap !== null && cap !== undefined) nv = Math.max(p.ovr, Math.min(nv, cap));
+      // cumul : une evolution a paliers peut gagner de la note a plusieurs paliers
+      const cur = p.ovr + overallDelta;
+      let nv = cur + delta;
+      if (cap !== null && cap !== undefined) nv = Math.max(cur, Math.min(nv, cap));
       overallDelta = nv - p.ovr;
       continue;
     }
@@ -600,8 +547,10 @@ function applyUpgrades(p, upgrades, grantedPlaystyles) {
       }
       continue;
     }
-    const label = DETAIL_LABEL_ALIASES[stat] || stat;
-    const category = STAT_ALIASES[label];
+    // GK : "POS" est la sous-stat Positioning du gardien ; aucune sous-stat
+    // n'alimente les notes de champ (Reactions != Dribbling).
+    const label = (isGk && stat === "POS") ? "Positioning" : (DETAIL_LABEL_ALIASES[stat] || stat);
+    const category = isGk ? undefined : STAT_ALIASES[label];
     const current = detail[label];
     let cappedDelta = delta;
     if (typeof current === "number") {
@@ -616,19 +565,27 @@ function applyUpgrades(p, upgrades, grantedPlaystyles) {
     }
   }
 
+  if (isGk) {
+    const acc = detail["Acceleration"], spr = detail["Sprint Speed"];
+    if (typeof detail["Speed"] === "number" && typeof acc === "number" && typeof spr === "number") {
+      const w = META.gkSpeedWeights;
+      detail["Speed"] = Math.floor((w["Acceleration"] * acc + w["Sprint Speed"] * spr + 50) / 100);
+    }
+  }
+
   const after = Object.assign({}, p, { detail });
   after.ovr = p.ovr + overallDelta;
   after.wf = wf;
   after.sm = sm;
-  const subsMap = p.pos === "GK" ? GK_CATEGORY_SUBSTATS : CATEGORY_SUBSTATS;
-  const weightsMap = p.pos === "GK" ? null : CATEGORY_WEIGHTS;
   for (const [field, touchedDeltas] of Object.entries(catDeltas)) {
     if (p[field] === null || p[field] === undefined) continue;
-    const substats = subsMap[field] || [];
-    const weights = weightsMap ? weightsMap[field] : null;
+    const substats = CATEGORY_SUBSTATS[field] || [];
+    const weights = CATEGORY_WEIGHTS[field];
 
     let weightedValue = null;
     if (weights && substats.length) {
+      // poids en pourcents entiers + arrondi half-up (comme EA, verifie sur
+      // ~17 700 cartes), en entiers pour eviter tout ecart de flottant.
       let total = 0;
       let ok = true;
       for (const s of substats) {
@@ -636,7 +593,7 @@ function applyUpgrades(p, upgrades, grantedPlaystyles) {
         if (typeof v !== "number") { ok = false; break; }
         total += (weights[s] || 0) * v;
       }
-      if (ok) weightedValue = Math.round(total);
+      if (ok) weightedValue = Math.floor((total + 50) / 100);
     }
 
     if (weightedValue !== null) {
@@ -644,8 +601,7 @@ function applyUpgrades(p, upgrades, grantedPlaystyles) {
     } else if (substats.length) {
       // Repli si les sous-stats detaillees sont incompletes : moyenne sur
       // TOUTES les sous-stats de la categorie (0 pour celles non touchees par
-      // l'evolution). Moins precis que le calcul pondere ci-dessus (qui
-      // reproduit la vraie formule EA).
+      // l'evolution). Moins precis que le calcul pondere ci-dessus.
       const total = substats.reduce((sum, s) => sum + (touchedDeltas[s] || 0), 0);
       after[field] = p[field] + Math.round(total / substats.length);
     } else {
@@ -661,6 +617,30 @@ function applyUpgrades(p, upgrades, grantedPlaystyles) {
   }
 
   return after;
+}
+
+// Gains d'une evolution pour un nombre de paliers termines (null = tous) et les
+// options choisies (1-based, une par palier). Meme regle que evo_levels.select_upgrades.
+function evoGains(evo, levelsDone, choices) {
+  if (!evo.levels) return { upgrades: evo.upgrades, playstyles: evo.grantedPlaystyles || [] };
+  const upgrades = [], playstyles = [];
+  evo.levels.forEach((lv, i) => {
+    if (levelsDone !== null && levelsDone !== undefined && i >= levelsDone) return;
+    const pick = (choices && Number.isInteger(choices[i])) ? choices[i] : 1;
+    const opt = (pick >= 1 && pick <= lv.options.length) ? lv.options[pick - 1] : lv.options[0];
+    upgrades.push(...opt.upgrades);
+    for (const ps of opt.playstyles) if (!playstyles.includes(ps)) playstyles.push(ps);
+  });
+  return { upgrades, playstyles };
+}
+const defaultChoices = evo => (evo.levels || []).map(() => 1);
+
+// Rejoue une evolution deja enregistree (paliers termines + choix) sur la carte.
+function replayEntry(player, h) {
+  const hEvo = DATA.evolutions.find(e => e.id === h.evolutionId);
+  if (!hEvo) return null;
+  const g = evoGains(hEvo, h.level, h.pathChoices);
+  return applyUpgrades(player, g.upgrades, g.playstyles);
 }
 
 const QUALITY_COLORS = { GOLD: "#e8c547", SILVER: "#c7cdd6", BRONZE: "#c98a4b", SPECIAL: "#ff6b35" };
@@ -730,15 +710,15 @@ function renderCard(container, plateEl, player, before) {
   plateEl.after(infoWrap);
 
   container.innerHTML = "";
-  const subsMap = player.pos === "GK" ? GK_CATEGORY_SUBSTATS : CATEGORY_SUBSTATS;
-  for (const cat of ["pace", "sho", "pas", "dri", "def", "phy"]) {
-    const val = player[cat];
+  for (const spec of cardBoxes(player)) {
+    const val = spec.get(player);
+    if (val === undefined || val === null) continue;
     const box = document.createElement("div");
     box.className = "box";
-    const beforeVal = before ? before[cat] : val;
+    const beforeVal = before ? spec.get(before) : val;
     const deltaHtml = before && val !== beforeVal ? `<span class="delta-up">+${val - beforeVal}</span>` : "";
     let subsHtml = "";
-    for (const label of subsMap[cat] || []) {
+    for (const label of spec.subs) {
       const v = player.detail[label];
       if (v === undefined) continue;
       const bv = before ? before.detail[label] : v;
@@ -747,7 +727,7 @@ function renderCard(container, plateEl, player, before) {
     }
     box.innerHTML = `
       <div class="head">
-        <span class="label">${CATEGORY_LABELS[cat]}</span>
+        <span class="label">${spec.label}</span>
         <span class="val" style="color:${statColor(val)}">${val}${deltaHtml}</span>
       </div>
       <div class="bar"><div style="width:${val}%;background:${statColor(val)}"></div></div>
@@ -755,6 +735,20 @@ function renderCard(container, plateEl, player, before) {
     `;
     container.appendChild(box);
   }
+}
+
+// Les 6 notes principales affichees : champ (PAC SHO PAS DRI DEF PHY) ou gardien
+// (DIV HAN KIC REF SPD POS, lues dans les sous-stats detaillees).
+function cardBoxes(player) {
+  if (player.pos === "GK") {
+    const extra = { SPD: ["Acceleration", "Sprint Speed"], REF: ["Reactions"] };
+    return META.gkMains.map(([code, label]) => ({
+      label: code, subs: extra[code] || [], get: pl => pl.detail[label],
+    }));
+  }
+  return ["pace", "sho", "pas", "dri", "def", "phy"].map(cat => ({
+    label: CATEGORY_LABELS[cat], subs: CATEGORY_SUBSTATS[cat], get: pl => pl[cat],
+  }));
 }
 
 function formatCost(evo) {
@@ -849,6 +843,7 @@ function rebuildEvoSelectOptions() {
 
 let selectedPlayer = null;
 let chain = []; // liste d'ids d'evolutions, dans l'ordre d'application
+let chainChoices = []; // en parallele de chain : option (1-based) choisie a chaque palier
 let currentMatches = [];
 
 // Identifiant stable d'un joueur pour relier une carte de DATA.players a une
@@ -932,6 +927,7 @@ evoSelect.addEventListener("change", () => {
   const evoId = parseInt(evoSelect.value, 10);
   if (!isNaN(evoId)) {
     chain.push(evoId);
+    chainChoices.push(defaultChoices(DATA.evolutions.find(e => e.id === evoId) || {}));
     evoSelect.value = "";
     render();
   }
@@ -944,15 +940,17 @@ toggleUnavailableBtn.addEventListener("click", () => {
 
 clearChainBtn.addEventListener("click", () => {
   chain = [];
+  chainChoices = [];
   render();
 });
 
 function removeStep(index) {
   chain.splice(index, 1);
+  chainChoices.splice(index, 1);
   render();
 }
 
-async function recordEvolutionUsage(evoId, playerEaId, playerName, stepIndex, button, statusEl) {
+async function recordEvolutionUsage(evoId, playerEaId, playerName, stepIndex, pathChoices, button, statusEl) {
   button.disabled = true;
   button.textContent = "Enregistrement…";
   statusEl.textContent = "";
@@ -960,7 +958,10 @@ async function recordEvolutionUsage(evoId, playerEaId, playerName, stepIndex, bu
     const res = await fetch("/api/record", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ evolutionId: evoId, playerEaId: playerEaId, playerName: playerName, notes: null }),
+      body: JSON.stringify({
+        evolutionId: evoId, playerEaId: playerEaId, playerName: playerName, notes: null,
+        pathChoices: pathChoices && pathChoices.length ? pathChoices : null,
+      }),
     });
     const data = await res.json();
     if (!res.ok || !data.ok) {
@@ -974,6 +975,7 @@ async function recordEvolutionUsage(evoId, playerEaId, playerName, stepIndex, bu
     // L'etape est desormais dans l'historique (rejouee par render) : on la
     // retire de la chaine pour ne pas l'appliquer deux fois.
     chain.splice(stepIndex, 1);
+    chainChoices.splice(stepIndex, 1);
     await loadHistoryEntriesSilently();
     rebuildEvoSelectOptions();
     if (filterEvolvedOnly.checked) updatePlayerResults();
@@ -995,6 +997,39 @@ function renderChainChips() {
     chip.innerHTML = `<span class="step-num">${i + 1}.</span> ${evo ? esc(evo.name) : "?"} <button type="button">x</button>`;
     chip.querySelector("button").addEventListener("click", () => removeStep(i));
     chainListEl.appendChild(chip);
+  });
+}
+
+// Une evolution Pathway propose, a certains paliers, plusieurs options dont on
+// n'applique qu'une : un selecteur par palier concerne.
+function optionSummary(opt) {
+  const stats = opt.upgrades.map(u => `+${u.delta} ${u.stat}`).join(", ");
+  const ps = opt.playstyles.length ? `PlayStyle ${opt.playstyles.join(", ")}` : "";
+  return [stats, ps].filter(Boolean).join(" · ") || "aucun gain de stats";
+}
+
+function renderChoiceSelectors(step, evo, stepIndex) {
+  (evo.levels || []).forEach((lv, li) => {
+    if (lv.options.length < 2) return;
+    const row = document.createElement("div");
+    row.className = "choice-row";
+    const label = document.createElement("label");
+    label.textContent = `Palier ${li + 1} — option : `;
+    const sel = document.createElement("select");
+    lv.options.forEach((opt, oi) => {
+      const o = document.createElement("option");
+      o.value = String(oi + 1);
+      o.textContent = `${String.fromCharCode(65 + oi)} — ${optionSummary(opt)}`;
+      sel.appendChild(o);
+    });
+    sel.value = String(chainChoices[stepIndex][li] || 1);
+    sel.addEventListener("change", () => {
+      chainChoices[stepIndex][li] = parseInt(sel.value, 10);
+      render();
+    });
+    label.appendChild(sel);
+    row.appendChild(label);
+    step.appendChild(row);
   });
 }
 
@@ -1024,10 +1059,12 @@ function render() {
     .sort((a, b) => (a.dateApplied || "").localeCompare(b.dateApplied || "") || a.id - b.id);
   const appliedNames = [];
   for (const h of alreadyApplied) {
+    const replayed = replayEntry(current, h);
+    if (!replayed) { appliedNames.push(`${esc(h.evolutionName || "#" + h.evolutionId)} (données introuvables, non appliquée)`); continue; }
+    current = replayed;
     const hEvo = DATA.evolutions.find(e => e.id === h.evolutionId);
-    if (!hEvo) { appliedNames.push(`${h.evolutionName || "#" + h.evolutionId} (données introuvables, non appliquée)`); continue; }
-    current = applyUpgrades(current, hEvo.upgrades, hEvo.grantedPlaystyles);
-    appliedNames.push(hEvo.name);
+    const progress = (h.level !== null && h.level !== undefined) ? ` (en cours ${h.level}/${h.maxLevel ?? "?"})` : "";
+    appliedNames.push(esc(hEvo.name) + progress);
   }
   if (appliedNames.length) {
     const info = document.createElement("div");
@@ -1062,8 +1099,9 @@ function render() {
     step.appendChild(recordStatus);
 
     const stepPlayerBefore = current;
+    const gains = evoGains(evo, null, chainChoices[i]);
     recordBtn.addEventListener("click", () => {
-      recordEvolutionUsage(evo.id, stepPlayerBefore.eaId, stepPlayerBefore.name, i, recordBtn, recordStatus);
+      recordEvolutionUsage(evo.id, stepPlayerBefore.eaId, stepPlayerBefore.name, i, chainChoices[i], recordBtn, recordStatus);
     });
 
     const summary = document.createElement("div");
@@ -1074,10 +1112,11 @@ function render() {
     summary.innerHTML = `
       <div><b>Coût :</b> <span class="cost">${formatCost(evo)}</span></div>
       <div><b>Conditions :</b> ${formatReq(evo.req)}</div>
-      <div><b>Gains :</b> ${formatUpgrades(evo.upgrades, evo.grantedPlaystyles)}</div>
+      <div><b>Gains :</b> ${formatUpgrades(gains.upgrades, gains.playstyles)}</div>
       ${usageLine}
     `;
     step.appendChild(summary);
+    renderChoiceSelectors(step, evo, i);
 
     const reasons = checkEligibility(current, evo.req);
     const banner = document.createElement("div");
@@ -1090,7 +1129,7 @@ function render() {
     }
     step.appendChild(banner);
 
-    const after = applyUpgrades(current, evo.upgrades, evo.grantedPlaystyles);
+    const after = applyUpgrades(current, gains.upgrades, gains.playstyles);
 
     const cards = document.createElement("div");
     cards.className = "cards";
@@ -1239,10 +1278,10 @@ function evolvedPlayerAt(entry, base) {
   let before = base;
   let after = base;
   for (const h of applied) {
-    const hEvo = DATA.evolutions.find(e => e.id === h.evolutionId);
-    if (!hEvo) continue;
+    const replayed = replayEntry(after, h);
+    if (!replayed) continue;
     before = after;
-    after = applyUpgrades(after, hEvo.upgrades, hEvo.grantedPlaystyles);
+    after = replayed;
   }
   return { before, after };
 }

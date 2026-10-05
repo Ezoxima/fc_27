@@ -138,6 +138,14 @@ Légende priorité : 🔴 bloquant / 🟠 important / 🟡 amélioration.
 
 > **Décisions du 05/10** : D6 oui · D5 git oui · D4 zip puis suppression (zip fait : `../fut27_archive_20261005.zip`, suppression de `fut27/` refusée par le garde-fou, à faire à la main) · D1 option A · D2 tranchée (Midfield Glow Up **terminée**) · D3 à vérifier.
 >
+> **Avancement 05/10 : Phase 4 terminée** — nouvel outil `validate_replay.py` (rejeu vs vraie carte du club, 5/6 identiques ; le 6e, Carlos Espí, dépend de l'évolution 2494, introuvable : page 404).
+> - **Paliers et options** (4.1/4.3) : `evo_levels.py` lit les `levels` embarqués dans chaque page fut.gg ; `evolutions.levels_json` ; `used_evolutions.level / max_level / path_choices` mis à jour à chaque import club ; le simulateur applique les paliers terminés et le choix d'option, et propose un sélecteur par palier pour une nouvelle évolution.
+> - **D1/D2/D3 tranchées par les données** : en cours = paliers terminés seulement ; Midfield Glow Up terminée ; carte « variante » (Gabriel Jesus) : pas de double gain, le rejeu est exact (4.2 : rien à corriger).
+> - **Poids (4.5)** : régression sur 17 748 cartes — Dribbling était faux (Reactions 5 %, Composure 5 %, Ball Control 30 %, Dribbling 45 %) et l'arrondi doit être *half-up* (100 % exact sur les 6 catégories). Alias `Dribbling` manquant côté Python ajouté ; la note (OVR) se cumule maintenant d'un palier à l'autre.
+> - **Gardiens (4.4)** : DIV/HAN/KIC/REF/SPD/POS ; SPD = 60 % Accélération + 40 % Sprint (100 % exact sur 2 202 gardiens) ; `Reactions` ne touche plus Dribbling.
+> - **Constantes (4.6)** : exportées dans `webapp_data.json` (`meta`), lues par le JS.
+> - **Scraper** : les évolutions obtenues via objectifs (Backline Conductor, Believe, Repeat Delivery…) ne repassent plus à « expirée » (contrôle de `endTime`).
+>
 > **Avancement 05/10 : Phase 3 terminée** — `/api/usage` renvoie aussi les expirées (+`active`), enregistrement/annulation rafraîchissent historique, usages et sélecteur, échappement HTML, libellé/style du toggle, tri stable. Testé dans le navigateur : T3, T4, T7 OK. Ménage 6.1-6.4 fait (zip + suppression `fut27/`, git initialisé).
 >
 > **Avancement 05/10 : Phase 2 terminée** — sauvegarde `fut27.backup-20261005.db` ; évolutions (+Goal Guardian 2538, Regista Realm 2537, Wing Specialization 2534, + 3 via objectifs ; expirées : Repeat Delivery, Frontline Paradox, Gallery Excellence) ; cartes via `scrape_players.py --only-new` (+1 208 traitées, 6.1 fait, 5.1 ON CONFLICT corrigé) ; 89 sous-stats ; club : Regista Realm (Xavi Espart, 0/3) enregistrée ; `simulateur.html` régénéré. Id 2494 (Carlos Espí) inconnue en base. 2.6 (Excel) non fait.
@@ -204,14 +212,14 @@ Légende priorité : 🔴 bloquant / 🟠 important / 🟡 amélioration.
 
 Dépend de D1, D2, D3.
 
-- [ ] 🟠 **4.1 Évolutions en cours** (selon D1).
+- [x] 🟠 **4.1 Évolutions en cours** (selon D1).
   - Pour l'option A :
     - migration : `ALTER TABLE used_evolutions ADD COLUMN level INTEGER` et `max_level INTEGER` ;
     - `fetch_my_evolutions.py:139-147` écrit le niveau ; à chaque import, mise à jour du niveau d'une ligne existante au lieu de l'ignorer ;
     - rejeu partiel dans `apply_upgrades` (Python) et `applyUpgrades` (JS).
   - Prérequis : vérifier dans `upgrades_json` que les gains sont bien découpés par palier.
-- [ ] 🟠 **4.2 Cartes variantes** (selon D3) : corriger le point de départ du rejeu.
-- [ ] 🟠 **4.3 Branches Pathway.**
+- [x] 🟠 **4.2 Cartes variantes** (selon D3) : corriger le point de départ du rejeu.
+- [x] 🟠 **4.3 Branches Pathway.**
   - Le dump GG Club fournit `evolutionPathChoices` (ex. Gabriel Jesus `[[1,1,3],[]]`, Lucas Vázquez `[[],[],[1,1,2]]`).
   - Aujourd'hui `upgrades_text` ne stocke qu'**une** branche (« Upgrades A/B… »), pas un tronc commun. « Intro to Pathway » (2488) et « Intro to Training Camp » (2490) ont 0 upgrade en base.
   - Étapes :
@@ -219,12 +227,12 @@ Dépend de D1, D2, D3.
     - (b) stocker le choix dans `used_evolutions` (colonne `path_choices` JSON) depuis `fetch_my_evolutions.py` ;
     - (c) rejouer la bonne branche ;
     - (d) dans le simulateur, proposer un sélecteur de branche pour une nouvelle évolution Pathway.
-- [ ] 🟠 **4.4 Gardiens** : Trust the Keeper (2531, active) donne `+9 POS`, une stat non mappée.
+- [x] 🟠 **4.4 Gardiens** : Trust the Keeper (2531, active) donne `+9 POS`, une stat non mappée.
   - Diving, Handling, Kicking, Reflexes et Positioning (GK) n'ont pas de catégorie, et Reactions ajoute 9 au champ `dri` d'un gardien.
   - Ajouter le mapping des catégories GK (DIV/HAN/KIC/REF/SPD/POS) en Python et en JS, et retirer le commentaire obsolète (`simulateur_template.html:483`, « pas de vraies évolutions GK »).
-- [ ] 🟡 **4.5 Poids du Dribbling** : Carlos Espí affiche 72 au lieu de 73 (72,45 avec les poids actuels).
+- [x] 🟡 **4.5 Poids du Dribbling** : Carlos Espí affiche 72 au lieu de 73 (72,45 avec les poids actuels).
   - Relever 2-3 cartes évoluées réelles (fut.gg), ajuster `CATEGORY_WEIGHTS` côté Python **et** JS.
-- [ ] 🟡 **4.6 Une seule source de vérité pour les constantes**.
+- [x] 🟡 **4.6 Une seule source de vérité pour les constantes**.
   - Aujourd'hui, alias, poids et listes de sous-stats sont dupliqués entre Python et JS.
   - Correctif : les exporter dans `webapp_data.json` (`meta.weights`, …) et les lire côté JS.
 

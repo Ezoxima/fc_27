@@ -29,10 +29,11 @@ import sqlite3
 import sys
 import time
 import uuid
-from collections import Counter
 from pathlib import Path
 
 import requests
+
+from evo_levels import club_evolution_entries, ensure_level_columns
 
 BASE = "https://www.fut.gg"
 HEADERS = {
@@ -136,15 +137,10 @@ class FutGG:
             time.sleep(0.5)
 
 
-def evolved_entries(player: dict) -> list[tuple[int, str]]:
-    """(evolution_id, statut) pour chaque évolution appliquée ou en cours."""
-    entries = [(int(e), "terminée") for e in (player.get("evolutionPath") or []) if e is not None]
-    active = player.get("activeEvolution")
-    if active and active.get("evolutionId") is not None:
-        active_id = int(active["evolutionId"])
-        if active_id not in {e for e, _ in entries}:
-            entries.append((active_id, f"en cours niv. {active.get('level')}/{active.get('maxLevel')}"))
-    return entries
+def entry_status(entry: dict) -> str:
+    if not entry["in_progress"]:
+        return "terminée"
+    return f"en cours niv. {entry['levels_done']}/{entry['max_level']}"
 
 
 def player_identity(player: dict) -> tuple[int | None, str]:
@@ -211,43 +207,69 @@ def main() -> None:
             return
 
     conn = sqlite3.connect(args.db)
+    ensure_level_columns(conn)
     evo_names = dict(conn.execute("SELECT id, name FROM evolutions"))
-    # Compteur (évolution, joueur) -> nb d'enregistrements : une évolution
-    # répétable peut légitimement apparaître plusieurs fois sur le même joueur.
-    already = Counter(conn.execute("SELECT evolution_id, player_ea_id FROM used_evolutions"))
+    evo_level_counts = {
+        evo_id: len(json.loads(levels)) for evo_id, levels in
+        conn.execute("SELECT id, levels_json FROM evolutions WHERE levels_json IS NOT NULL")
+    }
+    # (évolution, joueur) -> ids des lignes déjà enregistrées, dans l'ordre : une
+    # évolution répétable peut légitimement apparaître plusieurs fois sur le même joueur.
+    existing: dict[tuple, list[int]] = {}
+    for row_id, evo_id, ea in conn.execute(
+        "SELECT id, evolution_id, player_ea_id FROM used_evolutions ORDER BY id"
+    ):
+        existing.setdefault((evo_id, ea), []).append(row_id)
 
     print(f"{len(players)} joueurs dans le club.\n")
-    new_rows, unknown = [], set()
+    new_rows, updates, unknown = [], [], set()
     for player in players:
-        entries = evolved_entries(player)
+        entries = club_evolution_entries(player)
         if not entries:
             continue
         ea_id, name = player_identity(player)
         print(f"{name} (ea_id={ea_id})")
-        for evo_id, status in entries:
+        for entry in entries:
+            evo_id, status = entry["evolution_id"], entry_status(entry)
             known = evo_id in evo_names
-            is_new = already[(evo_id, ea_id)] == 0
+            level = entry["levels_done"]
+            max_level = entry["max_level"] or evo_level_counts.get(evo_id)
+            choices = json.dumps(entry["choices"]) if entry["choices"] else None
+            note = f"{RECORD_NOTE} ({status})"
+            queue = existing.get((evo_id, ea_id), [])
+            is_new = not queue
             if not is_new:
-                already[(evo_id, ea_id)] -= 1
+                updates.append((level, max_level, choices, RECORD_NOTE, note, queue.pop(0)))
             flag = "" if is_new else "  [déjà enregistrée]"
             print(f"   - [{evo_id}] {evo_names.get(evo_id, '??? inconnue en base')} ({status}){flag}")
             if not known:
                 unknown.add(evo_id)
             elif is_new:
-                new_rows.append((evo_id, ea_id, name, f"{RECORD_NOTE} ({status})"))
+                new_rows.append((evo_id, ea_id, name, note, level, max_level, choices))
 
     print(f"\n{len(new_rows)} nouvelle(s) évolution(s) à enregistrer.")
     if unknown:
         print(f"Ids absents de la table evolutions (expirées avant ton 1er scrape ?) : {sorted(unknown)}")
-    if args.record and new_rows:
+    if args.record:
+        # met aussi à jour niveau / choix / statut des lignes déjà enregistrées
+        # (ex. une évolution « en cours » devenue terminée) ; les notes écrites
+        # à la main (sans RECORD_NOTE) ne sont jamais modifiées.
         conn.executemany(
-            "INSERT INTO used_evolutions (evolution_id, player_ea_id, player_name, notes) VALUES (?, ?, ?, ?)",
-            new_rows,
+            """UPDATE used_evolutions SET level = ?, max_level = ?, path_choices = ?,
+                      notes = CASE WHEN notes LIKE ? || '%' THEN ? ELSE notes END
+               WHERE id = ?""",
+            updates,
         )
+        if new_rows:
+            conn.executemany(
+                "INSERT INTO used_evolutions (evolution_id, player_ea_id, player_name, notes, "
+                "level, max_level, path_choices) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                new_rows,
+            )
         conn.commit()
-        print("Enregistrées dans used_evolutions.")
-    elif new_rows:
-        print("(lecture seule — relance avec --record pour les enregistrer)")
+        print(f"Enregistrées dans used_evolutions ({len(new_rows)} nouvelle(s), {len(updates)} mise(s) à jour).")
+    elif new_rows or updates:
+        print("(lecture seule — relance avec --record pour enregistrer / mettre à jour)")
     conn.close()
 
 
