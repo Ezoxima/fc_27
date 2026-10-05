@@ -1,0 +1,12 @@
+.env
+club_dump/
+__pycache__/
+.ruff_cache/
+*.xlsx
+~$*
+webapp_data.json
+simulateur.html
+fut27.db
+fut27.backup-*.db
+fut27/
+.claude/

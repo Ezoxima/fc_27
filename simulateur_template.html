@@ -1,0 +1,1370 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>Simulateur d'évolutions FC 27</title>
+<style>
+  :root {
+    --bg: #14161c;
+    --panel: #1c1f27;
+    --panel-2: #23262f;
+    --border: #2f333d;
+    --text: #e8e9ec;
+    --text-dim: #9aa0ab;
+    --green: #3ecf6e;
+    --yellow: #e8c547;
+    --red: #e0554f;
+    --accent: #ff6b35;
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+    margin: 0;
+    padding: 20px;
+  }
+  h1 { font-size: 20px; margin: 0 0 16px; }
+  .controls {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 16px;
+    position: relative;
+  }
+  select, input, button {
+    background: var(--panel);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 14px;
+  }
+  button {
+    cursor: pointer;
+    font-weight: bold;
+  }
+  button:hover { background: var(--panel-2); }
+  select { min-width: 320px; }
+  input#playerSearch { min-width: 280px; }
+  .search-wrap { position: relative; }
+  #playerResults {
+    position: absolute;
+    top: 44px;
+    left: 0;
+    width: 320px;
+    max-height: 320px;
+    overflow-y: auto;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    z-index: 20;
+    display: none;
+  }
+  #playerResults div {
+    padding: 8px 12px;
+    cursor: pointer;
+    font-size: 13px;
+    border-bottom: 1px solid var(--border);
+  }
+  #playerResults div:hover { background: var(--panel-2); }
+  #playerResults .sub { color: var(--text-dim); font-size: 11px; }
+
+  .evolved-filter {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: var(--text-dim);
+    cursor: pointer;
+    user-select: none;
+  }
+  .evolved-filter input { cursor: pointer; }
+
+  .hint {
+    color: var(--text-dim);
+    font-size: 14px;
+    padding: 20px;
+    border: 1px dashed var(--border);
+    border-radius: 10px;
+  }
+
+  .chain-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 20px;
+  }
+  .chain-chip {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 6px 8px 6px 14px;
+    font-size: 13px;
+  }
+  .chain-chip .step-num {
+    color: var(--accent);
+    font-weight: bold;
+  }
+  .chain-chip button {
+    border: none;
+    background: var(--panel-2);
+    color: var(--text-dim);
+    border-radius: 50%;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    line-height: 1;
+    font-size: 12px;
+  }
+  .chain-chip button:hover { color: var(--red); }
+
+  .step {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px;
+    margin-bottom: 20px;
+  }
+  .step-header {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+  .step-header .step-num {
+    background: var(--accent);
+    color: #14161c;
+    font-weight: bold;
+    border-radius: 6px;
+    padding: 2px 8px;
+    font-size: 13px;
+  }
+  .step-header .step-name { font-size: 16px; font-weight: bold; }
+
+  .banner {
+    padding: 14px 18px;
+    border-radius: 10px;
+    font-weight: bold;
+    font-size: 15px;
+    margin-bottom: 16px;
+  }
+  .banner.ok { background: rgba(62,207,110,0.15); border: 1px solid var(--green); color: var(--green); }
+  .banner.ko { background: rgba(224,85,79,0.15); border: 1px solid var(--red); color: var(--red); }
+  .toast {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    background: rgba(62,207,110,0.15);
+    border: 1px solid var(--green);
+    color: var(--green);
+    padding: 12px 18px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.35);
+    opacity: 0;
+    transform: translateY(12px);
+    transition: opacity 0.25s ease, transform 0.25s ease;
+    pointer-events: none;
+    z-index: 1000;
+  }
+  .toast.show { opacity: 1; transform: translateY(0); }
+  .banner ul { margin: 6px 0 0; padding-left: 18px; font-weight: normal; color: var(--text); }
+
+  .evo-summary {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 18px;
+    margin-bottom: 16px;
+    font-size: 13px;
+    color: var(--text-dim);
+  }
+  .evo-summary b { color: var(--text); }
+  .evo-summary .cost { color: var(--accent); font-weight: bold; }
+
+  .cards {
+    display: grid;
+    gap: 20px;
+    grid-template-columns: 1fr 1fr;
+  }
+  .side-title {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-dim);
+    margin-bottom: 8px;
+  }
+  .name-plate {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+  .name-plate .ovr { font-size: 26px; font-weight: bold; }
+  .name-plate .name { font-size: 16px; font-weight: bold; }
+  .name-plate .pos { color: var(--text-dim); font-size: 13px; }
+
+  .grid6 {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 10px;
+  }
+  .box {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+  }
+  .box .head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 6px;
+  }
+  .box .head .label { font-weight: bold; font-size: 13px; }
+  .box .head .val { font-weight: bold; font-size: 16px; }
+  .bar {
+    height: 4px;
+    background: #33363f;
+    border-radius: 2px;
+    margin-bottom: 8px;
+    overflow: hidden;
+  }
+  .bar > div { height: 100%; }
+  .sub-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    color: var(--text-dim);
+    padding: 2px 0;
+  }
+  .sub-row .v { font-weight: bold; }
+  .delta-up { color: var(--green); font-size: 10px; margin-left: 4px; }
+
+  .info-card-wrap { margin-bottom: 14px; }
+  .info-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 14px;
+  }
+  .info-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 14px;
+    font-size: 12px;
+  }
+  .info-row-top { font-weight: bold; padding-bottom: 10px; margin-bottom: 10px; border-bottom: 1px solid var(--border); }
+  .info-row-top .info-chip { color: var(--green); }
+  .info-row-mid { color: var(--text-dim); padding-bottom: 10px; margin-bottom: 10px; border-bottom: 1px solid var(--border); }
+  .info-row-mid b { color: var(--text-dim); font-weight: bold; margin-right: 4px; }
+  .stars { color: var(--yellow); letter-spacing: 1px; }
+  .info-row-age { color: var(--text-dim); }
+  .info-row-age b { color: var(--text-dim); margin-right: 4px; }
+
+  .ps-icons-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 10px;
+  }
+  .ps-name {
+    font-size: 11px;
+    font-weight: bold;
+    padding: 3px 9px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    background: var(--panel-2);
+  }
+  .ps-name.ps-plus { border-color: var(--accent); color: var(--accent); background: rgba(255,107,53,0.15); }
+  .ps-name.ps-new { border-color: var(--green); color: var(--green); background: rgba(62,207,110,0.2); }
+
+  @media (max-width: 900px) {
+    .cards { grid-template-columns: 1fr; }
+  }
+
+  .tabs {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 20px;
+    border-bottom: 1px solid var(--border);
+  }
+  .tab-btn {
+    background: transparent;
+    border: none;
+    border-radius: 8px 8px 0 0;
+    color: var(--text-dim);
+    padding: 10px 16px;
+    font-size: 14px;
+    font-weight: bold;
+    cursor: pointer;
+  }
+  .tab-btn:hover { background: var(--panel-2); color: var(--text); }
+  .tab-btn.active { color: var(--text); background: var(--panel); border: 1px solid var(--border); border-bottom-color: var(--panel); position: relative; top: 1px; }
+  .view { display: none; }
+  .view.active { display: block; }
+
+  .history-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 14px;
+  }
+  .history-count { color: var(--text-dim); font-size: 13px; }
+  table.history-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  table.history-table th, table.history-table td {
+    text-align: left;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  table.history-table th { color: var(--text-dim); font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+  table.history-table tbody tr:hover { background: var(--panel-2); }
+  table.history-table .notes { color: var(--text-dim); }
+  .undo-btn {
+    background: transparent;
+    border: 1px solid var(--red);
+    color: var(--red);
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-size: 12px;
+  }
+  .undo-btn:hover { background: rgba(224,85,79,0.15); }
+
+  .player-link {
+    background: transparent;
+    border: none;
+    color: var(--text);
+    font-weight: bold;
+    padding: 0;
+    font-size: 13px;
+    cursor: pointer;
+    text-decoration: underline;
+    text-decoration-color: transparent;
+  }
+  .player-link:hover { background: transparent; color: var(--accent); text-decoration-color: var(--accent); }
+
+  .modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.6);
+    z-index: 100;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 40px 20px;
+    overflow-y: auto;
+  }
+  .modal-overlay.show { display: flex; }
+  .modal-box {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 22px;
+    width: 100%;
+    max-width: 640px;
+    max-height: 100%;
+  }
+  .modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+  }
+  .modal-header h2 { font-size: 17px; margin: 0; }
+  .modal-close {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    border-radius: 50%;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    font-size: 15px;
+    line-height: 1;
+  }
+  .modal-close:hover { color: var(--red); border-color: var(--red); }
+  .modal-section-title {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-dim);
+    margin: 20px 0 10px;
+  }
+  .evo-history-list { display: flex; flex-direction: column; gap: 8px; }
+  .evo-history-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 13px;
+  }
+  .evo-history-item .evo-history-main { display: flex; flex-direction: column; gap: 2px; }
+  .evo-history-item .evo-history-name { font-weight: bold; }
+  .evo-history-item .evo-history-date { color: var(--text-dim); font-size: 12px; }
+  .evo-history-item .evo-history-notes { color: var(--text-dim); font-size: 12px; }
+</style>
+</head>
+<body>
+
+<h1>Simulateur de chaîne d'évolutions - EA SPORTS FC 27</h1>
+
+<div class="tabs">
+  <button type="button" class="tab-btn active" data-tab="simulateur">Simulateur</button>
+  <button type="button" class="tab-btn" data-tab="history">Mes évolutions</button>
+</div>
+
+<div id="viewSimulateur" class="view active">
+  <div class="controls">
+    <div class="search-wrap">
+      <input type="text" id="playerSearch" placeholder="Tape un nom de joueur...">
+      <div id="playerResults"></div>
+    </div>
+    <label class="evolved-filter" for="filterEvolvedOnly">
+      <input type="checkbox" id="filterEvolvedOnly">
+      Joueurs déjà évolués uniquement
+    </label>
+    <select id="evoSelect"><option value="">-- Ajouter une évolution à la chaîne --</option></select>
+    <button id="toggleUnavailable" type="button" aria-pressed="false" title="Afficher ou masquer les évolutions épuisées ou expirées dans la liste"></button>
+    <button id="clearChain" type="button">Vider la chaîne</button>
+  </div>
+
+  <div id="chainList" class="chain-list"></div>
+
+  <div id="stepsContainer"></div>
+</div>
+
+<div id="viewHistory" class="view">
+  <div class="history-toolbar">
+    <span id="historyCount" class="history-count"></span>
+    <button id="refreshHistory" type="button">Rafraîchir</button>
+  </div>
+  <div id="historyContent"></div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<div id="playerModalOverlay" class="modal-overlay">
+  <div class="modal-box">
+    <div class="modal-header">
+      <h2 id="playerModalTitle">Joueur</h2>
+      <button type="button" id="playerModalClose" class="modal-close">✕</button>
+    </div>
+    <div id="playerModalStats"></div>
+    <div class="modal-section-title">Évolutions réalisées</div>
+    <div id="playerModalHistory"></div>
+  </div>
+</div>
+
+<script>
+const DATA = /*__DATA__*/;
+
+const CATEGORY_LABELS = { pace: "Pace", sho: "Shooting", pas: "Passing", dri: "Dribbling", def: "Defending", phy: "Physical" };
+const CATEGORY_SUBSTATS = {
+  pace: ["Acceleration", "Sprint Speed"],
+  sho: ["Att. Pos.", "Finishing", "Shot Power", "Long Shots", "Volleys", "Penalties"],
+  pas: ["Vision", "Crossing", "Fk Acc.", "Short Pass", "Long Pass", "Curve"],
+  dri: ["Agility", "Balance", "Reactions", "Ball Control", "Dribbling", "Composure"],
+  def: ["Interceptions", "Heading Acc.", "Def. Aware.", "Stand Tackle", "Slide Tackle"],
+  phy: ["Jumping", "Stamina", "Strength", "Aggression"],
+};
+// GK: jeu de sous-stats different (pas de vraies evolutions GK actives pour l'instant,
+// mais on affiche quand meme ce qu'on a plutot que rien).
+const GK_CATEGORY_SUBSTATS = {
+  pace: ["Acceleration", "Sprint Speed"],
+  sho: [], pas: [], dri: [],
+  def: ["Diving", "Handling", "Kicking", "Reflexes", "Positioning"],
+  phy: ["Reactions"],
+};
+// Poids reels utilises par EA pour deriver une note principale a partir de ses
+// sous-stats (source : fifauteam.com/fc-27-attributes, recoupe empiriquement
+// sur des cartes avant/apres evolution reelles). Pas de moyenne equiponderee :
+// ex. Fk Acc. ne pese que 5% dans Passing alors que Short Pass pese 35% - une
+// moyenne simple surestime l'effet des sous-stats a faible poids (souvent
+// celles qui recoivent les plus gros gains d'evolution).
+const CATEGORY_WEIGHTS = {
+  pace: { "Acceleration": 0.45, "Sprint Speed": 0.55 },
+  sho: {
+    "Att. Pos.": 0.05, "Finishing": 0.45, "Shot Power": 0.20,
+    "Long Shots": 0.20, "Volleys": 0.05, "Penalties": 0.05,
+  },
+  pas: {
+    "Vision": 0.20, "Crossing": 0.20, "Fk Acc.": 0.05,
+    "Short Pass": 0.35, "Long Pass": 0.15, "Curve": 0.05,
+  },
+  dri: {
+    "Agility": 0.10, "Balance": 0.05, "Reactions": 0.0,
+    "Ball Control": 0.35, "Dribbling": 0.50, "Composure": 0.0,
+  },
+  def: {
+    "Interceptions": 0.20, "Heading Acc.": 0.10, "Def. Aware.": 0.30,
+    "Stand Tackle": 0.30, "Slide Tackle": 0.10,
+  },
+  phy: {
+    "Jumping": 0.05, "Stamina": 0.25, "Strength": 0.50, "Aggression": 0.20,
+  },
+};
+
+const STAT_ALIASES = {
+  "PAC": "pace", "Sprint Speed": "pace", "Acceleration": "pace",
+  "SHO": "sho", "Finishing": "sho", "Shot Power": "sho", "Long Shots": "sho",
+  "Penalties": "sho", "Volleys": "sho", "Att. Pos.": "sho",
+  "PAS": "pas", "Vision": "pas", "Short Pass": "pas", "Long Pass": "pas",
+  "Crossing": "pas", "Curve": "pas", "Fk Acc.": "pas",
+  "DRI": "dri", "Ball Control": "dri", "Agility": "dri", "Balance": "dri",
+  "Composure": "dri", "Reactions": "dri", "Dribbling": "dri",
+  "DEF": "def", "Stand Tackle": "def", "Slide Tackle": "def", "Interceptions": "def",
+  "Def. Aware.": "def", "Heading Acc.": "def",
+  "PHY": "phy", "Strength": "phy", "Stamina": "phy", "Aggression": "phy", "Jumping": "phy",
+};
+const DETAIL_LABEL_ALIASES = {
+  "Positioning": "Att. Pos.",
+  "Fk Accuracy": "Fk Acc.",
+  "Defensive Awareness": "Def. Aware.",
+  "Standing Tackle": "Stand Tackle",
+  "Sliding Tackle": "Slide Tackle",
+  "Heading Accuracy": "Heading Acc.",
+};
+
+function statColor(v) {
+  if (v >= 85) return "#3ecf6e";
+  if (v >= 75) return "#8bd450";
+  if (v >= 65) return "#e8c547";
+  if (v >= 50) return "#e0954f";
+  return "#e0554f";
+}
+
+function checkEligibility(p, req) {
+  const reasons = [];
+  const all = new Set([p.pos, ...p.alt]);
+  if (req.overall_max !== undefined && p.ovr > req.overall_max) reasons.push(`Note ${p.ovr} > max ${req.overall_max}`);
+  if (req.position_in) {
+    const ok = req.position_in.some(pos => all.has(pos));
+    if (!ok) reasons.push(`Poste (${[...all].join(", ")}) pas dans ${req.position_in.join(", ")}`);
+  }
+  if (req.position_excluded) {
+    const bad = req.position_excluded.filter(pos => all.has(pos));
+    if (bad.length) reasons.push(`Poste exclu présent : ${bad.join(", ")}`);
+  }
+  if (req.max_position_count !== undefined && (1 + p.alt.length) > req.max_position_count) {
+    reasons.push(`Trop de postes (${1 + p.alt.length} > ${req.max_position_count})`);
+  }
+  if (req.pace_max !== undefined && (p.pace || 0) > req.pace_max) {
+    reasons.push(`Vitesse ${p.pace} > max ${req.pace_max}`);
+  }
+  if (req.max_playstyles !== undefined) {
+    const total = (p.psPlus || []).length + (p.psNormal || []).length;
+    if (total > req.max_playstyles) reasons.push(`Trop de PlayStyles (${total} > ${req.max_playstyles})`);
+  }
+  return reasons;
+}
+
+function applyUpgrades(p, upgrades, grantedPlaystyles) {
+  const detail = Object.assign({}, p.detail);
+  const catDeltas = {};
+  let overallDelta = 0;
+  let wf = p.wf, sm = p.sm;
+
+  for (const u of upgrades) {
+    const stat = u.stat, delta = u.delta, cap = u.result_value;
+    if (stat === "OVR") {
+      let nv = p.ovr + delta;
+      if (cap !== null && cap !== undefined) nv = Math.max(p.ovr, Math.min(nv, cap));
+      overallDelta = nv - p.ovr;
+      continue;
+    }
+    if (stat === "WF") {
+      if (wf !== null && wf !== undefined) {
+        let nv = wf + delta;
+        wf = (cap !== null && cap !== undefined) ? Math.max(wf, Math.min(nv, cap)) : nv;
+      }
+      continue;
+    }
+    if (stat === "SM") {
+      if (sm !== null && sm !== undefined) {
+        let nv = sm + delta;
+        sm = (cap !== null && cap !== undefined) ? Math.max(sm, Math.min(nv, cap)) : nv;
+      }
+      continue;
+    }
+    const label = DETAIL_LABEL_ALIASES[stat] || stat;
+    const category = STAT_ALIASES[label];
+    const current = detail[label];
+    let cappedDelta = delta;
+    if (typeof current === "number") {
+      let nv = current + delta;
+      if (cap !== null && cap !== undefined) nv = Math.max(current, Math.min(nv, cap));
+      detail[label] = nv;
+      cappedDelta = nv - current;
+    }
+    if (category) {
+      catDeltas[category] = catDeltas[category] || {};
+      catDeltas[category][label] = cappedDelta;
+    }
+  }
+
+  const after = Object.assign({}, p, { detail });
+  after.ovr = p.ovr + overallDelta;
+  after.wf = wf;
+  after.sm = sm;
+  const subsMap = p.pos === "GK" ? GK_CATEGORY_SUBSTATS : CATEGORY_SUBSTATS;
+  const weightsMap = p.pos === "GK" ? null : CATEGORY_WEIGHTS;
+  for (const [field, touchedDeltas] of Object.entries(catDeltas)) {
+    if (p[field] === null || p[field] === undefined) continue;
+    const substats = subsMap[field] || [];
+    const weights = weightsMap ? weightsMap[field] : null;
+
+    let weightedValue = null;
+    if (weights && substats.length) {
+      let total = 0;
+      let ok = true;
+      for (const s of substats) {
+        const v = detail[s];
+        if (typeof v !== "number") { ok = false; break; }
+        total += (weights[s] || 0) * v;
+      }
+      if (ok) weightedValue = Math.round(total);
+    }
+
+    if (weightedValue !== null) {
+      after[field] = weightedValue;
+    } else if (substats.length) {
+      // Repli si les sous-stats detaillees sont incompletes : moyenne sur
+      // TOUTES les sous-stats de la categorie (0 pour celles non touchees par
+      // l'evolution). Moins precis que le calcul pondere ci-dessus (qui
+      // reproduit la vraie formule EA).
+      const total = substats.reduce((sum, s) => sum + (touchedDeltas[s] || 0), 0);
+      after[field] = p[field] + Math.round(total / substats.length);
+    } else {
+      const vals = Object.values(touchedDeltas);
+      after[field] = p[field] + Math.round(vals.reduce((a, b) => a + b, 0) / vals.length);
+    }
+  }
+
+  if (grantedPlaystyles && grantedPlaystyles.length) {
+    const existing = new Set([...(p.psPlus || []), ...(p.psNormal || [])]);
+    const newOnes = grantedPlaystyles.filter(ps => !existing.has(ps));
+    after.psNormal = [...(p.psNormal || []), ...newOnes];
+  }
+
+  return after;
+}
+
+const QUALITY_COLORS = { GOLD: "#e8c547", SILVER: "#c7cdd6", BRONZE: "#c98a4b", SPECIAL: "#ff6b35" };
+
+function cmToFeetInches(cm) {
+  if (!cm) return "";
+  const totalIn = cm / 2.54;
+  const feet = Math.floor(totalIn / 12);
+  const inches = Math.round(totalIn % 12);
+  return `${feet}'${inches}"`;
+}
+
+function starRating(n) {
+  n = n || 0;
+  return "★".repeat(n) + "☆".repeat(Math.max(0, 5 - n));
+}
+
+function renderPlaystyleIcons(list, addedSet, className) {
+  if (!list.length) return "";
+  return list.map(name => {
+    const isNew = addedSet && addedSet.has(name);
+    return `<span class="ps-name ${className}${isNew ? " ps-new" : ""}">${name}${isNew ? " (nouveau)" : ""}</span>`;
+  }).join("");
+}
+
+function renderInfoCard(player, before) {
+  const beforePlus = before ? new Set(before.psPlus || []) : null;
+  const beforeNormal = before ? new Set(before.psNormal || []) : null;
+  const newPlus = beforePlus ? new Set((player.psPlus || []).filter(p => !beforePlus.has(p))) : null;
+  const newNormal = beforeNormal ? new Set((player.psNormal || []).filter(p => !beforeNormal.has(p))) : null;
+  const qColor = QUALITY_COLORS[player.quality] || "#e8e9ec";
+
+  return `
+    <div class="info-card">
+      <div class="info-row info-row-top">
+        <span class="info-chip">${player.nation || "-"}</span>
+        <span class="info-chip">${player.league || "-"}</span>
+        <span class="info-chip">${player.club || "-"}</span>
+        <span class="info-chip" style="color:${qColor}">${player.quality || "-"}</span>
+      </div>
+      <div class="info-row info-row-mid">
+        <span><b>SKILLS</b> <span class="stars">${starRating(player.sm)}</span></span>
+        <span><b>WEAK FOOT</b> <span class="stars">${starRating(player.wf)}</span></span>
+        <span><b>HEIGHT</b> ${player.height ? `${player.height}cm | ${cmToFeetInches(player.height)}` : "-"}</span>
+        <span><b>FOOT</b> ${player.foot || "-"}</span>
+      </div>
+      <div class="info-row info-row-age"><b>AGE</b> ${player.age != null ? player.age + " ans" : "-"}</div>
+      <div class="ps-icons-row">
+        ${renderPlaystyleIcons(player.psPlus || [], newPlus, "ps-plus")}
+        ${renderPlaystyleIcons(player.psNormal || [], newNormal, "ps-normal")}
+      </div>
+    </div>
+  `;
+}
+
+function renderCard(container, plateEl, player, before) {
+  plateEl.innerHTML = `
+    <span class="ovr" style="color:${statColor(player.ovr)}">${player.ovr}</span>
+    <span class="name">${player.name}</span>
+    <span class="pos">${player.pos}${player.alt.length ? " / " + player.alt.join(", ") : ""}</span>
+  `;
+  const existingInfo = plateEl.nextElementSibling;
+  if (existingInfo && existingInfo.classList.contains("info-card-wrap")) existingInfo.remove();
+  const infoWrap = document.createElement("div");
+  infoWrap.className = "info-card-wrap";
+  infoWrap.innerHTML = renderInfoCard(player, before);
+  plateEl.after(infoWrap);
+
+  container.innerHTML = "";
+  const subsMap = player.pos === "GK" ? GK_CATEGORY_SUBSTATS : CATEGORY_SUBSTATS;
+  for (const cat of ["pace", "sho", "pas", "dri", "def", "phy"]) {
+    const val = player[cat];
+    const box = document.createElement("div");
+    box.className = "box";
+    const beforeVal = before ? before[cat] : val;
+    const deltaHtml = before && val !== beforeVal ? `<span class="delta-up">+${val - beforeVal}</span>` : "";
+    let subsHtml = "";
+    for (const label of subsMap[cat] || []) {
+      const v = player.detail[label];
+      if (v === undefined) continue;
+      const bv = before ? before.detail[label] : v;
+      const d = before && v !== bv ? `<span class="delta-up">+${v - bv}</span>` : "";
+      subsHtml += `<div class="sub-row"><span>${label}</span><span class="v" style="color:${statColor(v)}">${v}${d}</span></div>`;
+    }
+    box.innerHTML = `
+      <div class="head">
+        <span class="label">${CATEGORY_LABELS[cat]}</span>
+        <span class="val" style="color:${statColor(val)}">${val}${deltaHtml}</span>
+      </div>
+      <div class="bar"><div style="width:${val}%;background:${statColor(val)}"></div></div>
+      ${subsHtml}
+    `;
+    container.appendChild(box);
+  }
+}
+
+function formatCost(evo) {
+  const bits = [];
+  if (evo.coinCost) bits.push(`${evo.coinCost.toLocaleString("fr-FR")} pièces`);
+  if (evo.pointCost) bits.push(`${evo.pointCost.toLocaleString("fr-FR")} FC Points`);
+  return bits.length ? bits.join(" + ") : "Gratuite";
+}
+
+function formatReq(req) {
+  const parts = [];
+  if (req.overall_max !== undefined) parts.push(`Overall Max ${req.overall_max}`);
+  if (req.position_in) parts.push(`Position ${req.position_in.join(", ")}`);
+  if (req.position_excluded) parts.push(`Postes exclus : ${req.position_excluded.join(", ")}`);
+  if (req.max_playstyles !== undefined) parts.push(`Max PS ${req.max_playstyles}`);
+  if (req.pace_max !== undefined) parts.push(`Pace Max ${req.pace_max}`);
+  if (req.max_position_count !== undefined) parts.push(`Max Pos. ${req.max_position_count}`);
+  return parts.length ? parts.join(" &nbsp;|&nbsp; ") : "Aucune condition";
+}
+
+function formatUpgrades(upgrades, grantedPlaystyles) {
+  const parts = upgrades.map(u => {
+    const cap = (u.result_value !== null && u.result_value !== undefined) ? ` (max ${u.result_value})` : "";
+    return `+${u.delta} ${u.stat}${cap}`;
+  });
+  if (grantedPlaystyles && grantedPlaystyles.length) {
+    parts.push(`PlayStyle: ${grantedPlaystyles.join(", ")}`);
+  }
+  return parts.join(", ");
+}
+
+// --- wiring ---
+const evoSelect = document.getElementById("evoSelect");
+const playerSearch = document.getElementById("playerSearch");
+const playerResults = document.getElementById("playerResults");
+const filterEvolvedOnly = document.getElementById("filterEvolvedOnly");
+const chainListEl = document.getElementById("chainList");
+const stepsContainer = document.getElementById("stepsContainer");
+const clearChainBtn = document.getElementById("clearChain");
+const toggleUnavailableBtn = document.getElementById("toggleUnavailable");
+const toastEl = document.getElementById("toast");
+
+let toastTimer = null;
+function showToast(message) {
+  toastEl.textContent = message;
+  toastEl.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toastEl.classList.remove("show"), 3000);
+}
+
+// Par defaut le selecteur ne propose que les evolutions encore utilisables ;
+// le bouton a cote remet les epuisees / expirees (utile pour rejouer un rattrapage).
+let showUnavailableEvos = false;
+const isEvoUnavailable = evo => evo.active === false || evo.remainingUses <= 0;
+
+function rebuildEvoSelectOptions() {
+  const previousValue = evoSelect.value;
+  evoSelect.innerHTML = "";
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = "-- Ajouter une évolution à la chaîne --";
+  evoSelect.appendChild(placeholder);
+  const hiddenCount = DATA.evolutions.filter(isEvoUnavailable).length;
+  toggleUnavailableBtn.textContent = showUnavailableEvos
+    ? "Masquer épuisées/expirées"
+    : `Afficher épuisées/expirées (${hiddenCount})`;
+  toggleUnavailableBtn.setAttribute("aria-pressed", String(showUnavailableEvos));
+  toggleUnavailableBtn.disabled = hiddenCount === 0;
+  for (const evo of DATA.evolutions) {
+    if (!showUnavailableEvos && isEvoUnavailable(evo)) continue;
+    const opt = document.createElement("option");
+    opt.value = evo.id;
+    const cost = formatCost(evo);
+    let tag = cost !== "Gratuite" ? "  [PAYANTE]" : "";
+    if (evo.active === false) {
+      tag += "  [EXPIREE]";
+    } else if (evo.remainingUses <= 0) {
+      tag += `  [EPUISEE ${evo.usedCount}/${evo.repeatabilityCount}]`;
+    } else if (evo.repeatabilityCount > 1) {
+      tag += `  [${evo.remainingUses}/${evo.repeatabilityCount} restants]`;
+    }
+    opt.textContent = evo.name + tag;
+    evoSelect.appendChild(opt);
+  }
+  evoSelect.value = previousValue;
+}
+
+let selectedPlayer = null;
+let chain = []; // liste d'ids d'evolutions, dans l'ordre d'application
+let currentMatches = [];
+
+// Identifiant stable d'un joueur pour relier une carte de DATA.players a une
+// entree d'historique (memes regles que sameHistoryPlayer/findPlayerData plus
+// bas : eaId en priorite, nom en repli).
+function playerIdentityKey(p) {
+  return p.eaId ? `id:${p.eaId}` : (p.name ? `name:${p.name}` : null);
+}
+function historyEntryIdentityKey(e) {
+  return e.playerEaId ? `id:${e.playerEaId}` : (e.playerName ? `name:${e.playerName}` : null);
+}
+
+let evolvedPlayerKeys = new Set();
+function rebuildEvolvedPlayerKeys() {
+  evolvedPlayerKeys = new Set();
+  for (const e of historyEntries) {
+    const key = historyEntryIdentityKey(e);
+    if (key) evolvedPlayerKeys.add(key);
+  }
+}
+
+function selectPlayer(p) {
+  selectedPlayer = p;
+  playerSearch.value = `${p.name} (${p.ovr} OVR, ${p.pos})`;
+  playerResults.style.display = "none";
+  render();
+}
+
+function updatePlayerResults() {
+  const q = playerSearch.value.trim().toLowerCase();
+  const onlyEvolved = filterEvolvedOnly.checked;
+  if (q.length < 2 && !onlyEvolved) { playerResults.style.display = "none"; currentMatches = []; return; }
+  currentMatches = [];
+  for (const p of DATA.players) {
+    if (onlyEvolved && !evolvedPlayerKeys.has(playerIdentityKey(p))) continue;
+    if (q.length >= 2 && !(p.name && p.name.toLowerCase().includes(q))) continue;
+    currentMatches.push(p);
+    if (currentMatches.length >= 30) break;
+  }
+  playerResults.innerHTML = "";
+  if (currentMatches.length === 0) {
+    const div = document.createElement("div");
+    div.className = "sub";
+    div.textContent = onlyEvolved
+      ? "Aucun joueur déjà évolué ne correspond."
+      : "Aucun joueur trouvé pour cette recherche.";
+    playerResults.appendChild(div);
+  }
+  for (const p of currentMatches) {
+    const div = document.createElement("div");
+    div.innerHTML = `${p.name} <span class="sub">(${p.pos}, ${p.ovr} OVR, ${p.club || p.league || ""})</span>`;
+    div.addEventListener("click", () => selectPlayer(p));
+    playerResults.appendChild(div);
+  }
+  playerResults.style.display = "block";
+  render();
+}
+
+playerSearch.addEventListener("input", () => {
+  selectedPlayer = null; // on retape -> l'ancienne selection n'est plus valable tant qu'on n'en reprend pas une
+  updatePlayerResults();
+});
+
+filterEvolvedOnly.addEventListener("change", () => {
+  updatePlayerResults();
+});
+
+playerSearch.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !selectedPlayer && currentMatches.length > 0) {
+    selectPlayer(currentMatches[0]);
+  }
+});
+
+document.addEventListener("click", (e) => {
+  if (!playerResults.contains(e.target) && e.target !== playerSearch) {
+    playerResults.style.display = "none";
+  }
+});
+
+evoSelect.addEventListener("change", () => {
+  const evoId = parseInt(evoSelect.value, 10);
+  if (!isNaN(evoId)) {
+    chain.push(evoId);
+    evoSelect.value = "";
+    render();
+  }
+});
+
+toggleUnavailableBtn.addEventListener("click", () => {
+  showUnavailableEvos = !showUnavailableEvos;
+  rebuildEvoSelectOptions();
+});
+
+clearChainBtn.addEventListener("click", () => {
+  chain = [];
+  render();
+});
+
+function removeStep(index) {
+  chain.splice(index, 1);
+  render();
+}
+
+async function recordEvolutionUsage(evoId, playerEaId, playerName, button, statusEl) {
+  button.disabled = true;
+  button.textContent = "Enregistrement…";
+  statusEl.textContent = "";
+  try {
+    const res = await fetch("/api/record", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ evolutionId: evoId, playerEaId: playerEaId, playerName: playerName, notes: null }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error || `HTTP ${res.status}`);
+    }
+    const evo = DATA.evolutions.find(e => e.id === evoId);
+    if (evo) {
+      evo.usedCount = data.usedCount;
+      evo.remainingUses = data.remainingUses;
+    }
+    rebuildEvoSelectOptions();
+    render();
+    showToast(`✓ "${evo ? evo.name : "Évolution"}" enregistrée pour ${playerName}`);
+  } catch (err) {
+    statusEl.textContent = "Serveur local non disponible — lance record_server.py";
+    button.disabled = false;
+    button.textContent = "Enregistrer cette évolution";
+  }
+}
+
+function renderChainChips() {
+  chainListEl.innerHTML = "";
+  chain.forEach((evoId, i) => {
+    const evo = DATA.evolutions.find(e => e.id === evoId);
+    const chip = document.createElement("div");
+    chip.className = "chain-chip";
+    chip.innerHTML = `<span class="step-num">${i + 1}.</span> ${evo ? evo.name : "?"} <button type="button">x</button>`;
+    chip.querySelector("button").addEventListener("click", () => removeStep(i));
+    chainListEl.appendChild(chip);
+  });
+}
+
+function render() {
+  renderChainChips();
+  stepsContainer.innerHTML = "";
+
+  if (!selectedPlayer || chain.length === 0) {
+    const hint = document.createElement("div");
+    hint.className = "hint";
+    const missing = [];
+    if (!selectedPlayer) missing.push("clique sur un joueur dans les résultats de recherche (ou appuie sur Entrée pour prendre le premier)");
+    if (chain.length === 0) missing.push("ajoute au moins une évolution à la chaîne");
+    hint.innerHTML = "Pour commencer : " + missing.join(" et ") + ".";
+    stepsContainer.appendChild(hint);
+    return;
+  }
+
+  // La chaine part de l'etat REEL du joueur : on rejoue d'abord, dans l'ordre
+  // chronologique, les evolutions deja enregistrees pour lui (sinon la carte
+  // de base est utilisee et la double evolution n'est jamais cumulee).
+  let current = selectedPlayer;
+  const selectedKey = playerIdentityKey(selectedPlayer);
+  const alreadyApplied = historyEntries
+    .filter(e => selectedKey && historyEntryIdentityKey(e) === selectedKey)
+    .slice()
+    .sort((a, b) => (a.dateApplied || "").localeCompare(b.dateApplied || "") || a.id - b.id);
+  const appliedNames = [];
+  for (const h of alreadyApplied) {
+    const hEvo = DATA.evolutions.find(e => e.id === h.evolutionId);
+    if (!hEvo) { appliedNames.push(`${h.evolutionName || "#" + h.evolutionId} (données introuvables, non appliquée)`); continue; }
+    current = applyUpgrades(current, hEvo.upgrades, hEvo.grantedPlaystyles);
+    appliedNames.push(hEvo.name);
+  }
+  if (appliedNames.length) {
+    const info = document.createElement("div");
+    info.className = "hint";
+    info.innerHTML = `<b>Déjà appliquées à ce joueur (cumulées avant la chaîne) :</b> ${appliedNames.join(" → ")}`;
+    stepsContainer.appendChild(info);
+  }
+
+  chain.forEach((evoId, i) => {
+    const evo = DATA.evolutions.find(e => e.id === evoId);
+    if (!evo) return;
+
+    const step = document.createElement("div");
+    step.className = "step";
+
+    const header = document.createElement("div");
+    header.className = "step-header";
+    header.innerHTML = `<span class="step-num">Étape ${i + 1}</span><span class="step-name">${evo.name}</span>`;
+    const recordBtn = document.createElement("button");
+    recordBtn.type = "button";
+    recordBtn.textContent = "Enregistrer cette évolution";
+    recordBtn.style.marginLeft = "auto";
+    header.style.justifyContent = "space-between";
+    header.appendChild(recordBtn);
+    step.appendChild(header);
+
+    const recordStatus = document.createElement("div");
+    recordStatus.style.color = "var(--red)";
+    recordStatus.style.fontSize = "12px";
+    recordStatus.style.marginTop = "-8px";
+    recordStatus.style.marginBottom = "14px";
+    step.appendChild(recordStatus);
+
+    const stepPlayerBefore = current;
+    recordBtn.addEventListener("click", () => {
+      recordEvolutionUsage(evo.id, stepPlayerBefore.eaId, stepPlayerBefore.name, recordBtn, recordStatus);
+    });
+
+    const summary = document.createElement("div");
+    summary.className = "evo-summary";
+    const usageLine = evo.remainingUses <= 0
+      ? `<div style="color:var(--red)"><b>⚠ Déjà épuisée :</b> ${evo.usedCount}/${evo.repeatabilityCount} usages enregistrés - simulation indicative</div>`
+      : (evo.repeatabilityCount > 1 ? `<div><b>Usages restants :</b> ${evo.remainingUses}/${evo.repeatabilityCount}</div>` : "");
+    summary.innerHTML = `
+      <div><b>Coût :</b> <span class="cost">${formatCost(evo)}</span></div>
+      <div><b>Conditions :</b> ${formatReq(evo.req)}</div>
+      <div><b>Gains :</b> ${formatUpgrades(evo.upgrades, evo.grantedPlaystyles)}</div>
+      ${usageLine}
+    `;
+    step.appendChild(summary);
+
+    const reasons = checkEligibility(current, evo.req);
+    const banner = document.createElement("div");
+    if (reasons.length) {
+      banner.className = "banner ko";
+      banner.innerHTML = "NON ÉLIGIBLE<ul>" + reasons.map(r => `<li>${r}</li>`).join("") + "</ul>";
+    } else {
+      banner.className = "banner ok";
+      banner.innerHTML = "ÉLIGIBLE";
+    }
+    step.appendChild(banner);
+
+    const after = applyUpgrades(current, evo.upgrades, evo.grantedPlaystyles);
+
+    const cards = document.createElement("div");
+    cards.className = "cards";
+    const beforeCol = document.createElement("div");
+    beforeCol.innerHTML = `<div class="side-title">Avant l'étape ${i + 1}</div>
+      <div class="name-plate" id="plateBefore${i}"></div><div class="grid6" id="gridBefore${i}"></div>`;
+    const afterCol = document.createElement("div");
+    afterCol.innerHTML = `<div class="side-title">Après l'étape ${i + 1}</div>
+      <div class="name-plate" id="plateAfter${i}"></div><div class="grid6" id="gridAfter${i}"></div>`;
+    cards.appendChild(beforeCol);
+    cards.appendChild(afterCol);
+    step.appendChild(cards);
+
+    stepsContainer.appendChild(step);
+
+    renderCard(document.getElementById(`gridBefore${i}`), document.getElementById(`plateBefore${i}`), current, null);
+    renderCard(document.getElementById(`gridAfter${i}`), document.getElementById(`plateAfter${i}`), after, current);
+
+    // L'etape suivante part de l'etat APRES celle-ci, meme si celle-ci
+    // n'etait pas eligible (simulation "et si" indicative).
+    current = after;
+  });
+}
+
+async function mergeLiveUsage() {
+  try {
+    const res = await fetch("/api/usage", { signal: AbortSignal.timeout(1200) });
+    if (!res.ok) return;
+    const live = await res.json();
+    const byId = new Map(live.map(e => [e.id, e]));
+    for (const evo of DATA.evolutions) {
+      const l = byId.get(evo.id);
+      if (l) {
+        evo.usedCount = l.usedCount;
+        evo.remainingUses = l.remainingUses;
+      }
+    }
+  } catch (err) {
+    // page ouverte en statique (file://) ou serveur non lance : on continue
+    // avec le snapshot fige de DATA.evolutions, comportement inchange.
+  }
+}
+
+// --- onglets ---
+const tabBtns = document.querySelectorAll(".tab-btn");
+const views = { simulateur: document.getElementById("viewSimulateur"), history: document.getElementById("viewHistory") };
+
+tabBtns.forEach(btn => {
+  btn.addEventListener("click", () => {
+    tabBtns.forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    for (const key in views) views[key].classList.remove("active");
+    views[btn.dataset.tab].classList.add("active");
+    if (btn.dataset.tab === "history") loadHistory();
+  });
+});
+
+// --- historique ("mes évolutions") ---
+const historyContent = document.getElementById("historyContent");
+const historyCount = document.getElementById("historyCount");
+const refreshHistoryBtn = document.getElementById("refreshHistory");
+let historyEntries = [];
+
+function formatDate(iso) {
+  if (!iso) return "-";
+  const d = new Date(iso.replace(" ", "T") + "Z");
+  if (isNaN(d.getTime())) return iso;
+  return d.toLocaleString("fr-FR", { dateStyle: "medium", timeStyle: "short" });
+}
+
+// Deux entrées d'historique concernent le meme joueur si elles partagent un
+// eaId (identifiant fiable), sinon on retombe sur le nom (les enregistrements
+// passes via record_evolution.py sans eaId n'ont que ca).
+function sameHistoryPlayer(a, b) {
+  if (a.playerEaId && b.playerEaId) return String(a.playerEaId) === String(b.playerEaId);
+  return !!a.playerName && a.playerName === b.playerName;
+}
+
+function findPlayerData(entry) {
+  if (entry.playerEaId) {
+    const byEaId = DATA.players.find(p => p.eaId && String(p.eaId) === String(entry.playerEaId));
+    if (byEaId) return byEaId;
+  }
+  return DATA.players.find(p => p.name === entry.playerName) || null;
+}
+
+// --- modal "stats du joueur + évolutions réalisées" ---
+const playerModalOverlay = document.getElementById("playerModalOverlay");
+const playerModalTitle = document.getElementById("playerModalTitle");
+const playerModalStats = document.getElementById("playerModalStats");
+const playerModalHistory = document.getElementById("playerModalHistory");
+const playerModalClose = document.getElementById("playerModalClose");
+
+function closePlayerModal() {
+  playerModalOverlay.classList.remove("show");
+}
+
+function renderPlayerModalHistory(entry) {
+  const related = historyEntries
+    .filter(e => sameHistoryPlayer(e, entry))
+    .slice()
+    .sort((a, b) => (a.dateApplied || "").localeCompare(b.dateApplied || ""));
+
+  playerModalHistory.innerHTML = "";
+  if (!related.length) {
+    playerModalHistory.innerHTML = `<div class="hint">Aucune évolution enregistrée pour ce joueur.</div>`;
+    return;
+  }
+  const list = document.createElement("div");
+  list.className = "evo-history-list";
+  for (const e of related) {
+    const item = document.createElement("div");
+    item.className = "evo-history-item";
+    item.innerHTML = `
+      <div class="evo-history-main">
+        <span class="evo-history-name">${e.evolutionName || `#${e.evolutionId}`}</span>
+        <span class="evo-history-date">${formatDate(e.dateApplied)}</span>
+        ${e.notes ? `<span class="evo-history-notes">${e.notes}</span>` : ""}
+      </div>
+    `;
+    const undoBtn = document.createElement("button");
+    undoBtn.type = "button";
+    undoBtn.className = "undo-btn";
+    undoBtn.textContent = "Annuler";
+    undoBtn.addEventListener("click", async () => {
+      await undoHistoryEntry(e.id, undoBtn);
+      if (playerModalOverlay.classList.contains("show")) renderPlayerModalHistory(entry);
+    });
+    item.appendChild(undoBtn);
+    list.appendChild(item);
+  }
+  playerModalHistory.appendChild(list);
+}
+
+// Carte du joueur telle qu'elle est APRES l'evolution `entry` : on rejoue, dans
+// l'ordre chronologique, les evolutions enregistrees jusqu'a celle-ci incluse.
+// Renvoie aussi l'etat juste avant pour afficher les gains.
+function evolvedPlayerAt(entry, base) {
+  const upTo = historyEntries
+    .filter(e => sameHistoryPlayer(e, entry))
+    .slice()
+    .sort((a, b) => (a.dateApplied || "").localeCompare(b.dateApplied || "") || a.id - b.id);
+  const idx = upTo.findIndex(e => e.id === entry.id);
+  const applied = idx >= 0 ? upTo.slice(0, idx + 1) : [entry];
+  let before = base;
+  let after = base;
+  for (const h of applied) {
+    const hEvo = DATA.evolutions.find(e => e.id === h.evolutionId);
+    if (!hEvo) continue;
+    before = after;
+    after = applyUpgrades(after, hEvo.upgrades, hEvo.grantedPlaystyles);
+  }
+  return { before, after };
+}
+
+function openPlayerModal(entry) {
+  const player = findPlayerData(entry);
+  playerModalTitle.textContent = entry.playerName || "Joueur";
+
+  if (player) {
+    const { before, after } = evolvedPlayerAt(entry, player);
+    playerModalStats.innerHTML = `<div class="name-plate" id="modalPlate"></div><div class="grid6" id="modalGrid"></div>`;
+    renderCard(document.getElementById("modalGrid"), document.getElementById("modalPlate"), after, before === after ? null : before);
+  } else {
+    playerModalStats.innerHTML = `<div class="hint">Ce joueur n'a pas été trouvé dans la base actuelle (carte peut-etre retirée) — seul l'historique des évolutions est disponible.</div>`;
+  }
+
+  renderPlayerModalHistory(entry);
+  playerModalOverlay.classList.add("show");
+}
+
+playerModalClose.addEventListener("click", closePlayerModal);
+playerModalOverlay.addEventListener("click", (e) => {
+  if (e.target === playerModalOverlay) closePlayerModal();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && playerModalOverlay.classList.contains("show")) closePlayerModal();
+});
+
+async function undoHistoryEntry(id, button) {
+  if (!confirm("Annuler cet enregistrement ?")) return;
+  button.disabled = true;
+  button.textContent = "…";
+  try {
+    const res = await fetch(`/api/history/${id}`, { method: "DELETE" });
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    showToast("✓ Enregistrement annulé");
+    await loadHistory();
+  } catch (err) {
+    button.disabled = false;
+    button.textContent = "Annuler";
+    showToast("Échec de l'annulation — serveur local non disponible ?");
+  }
+}
+
+function renderHistory(entries) {
+  if (!entries.length) {
+    historyCount.textContent = "";
+    historyContent.innerHTML = `<div class="hint">Aucune évolution enregistrée pour l'instant. Utilise le bouton "Enregistrer cette évolution" dans le simulateur, ou record_evolution.py.</div>`;
+    return;
+  }
+  historyCount.textContent = `${entries.length} évolution${entries.length > 1 ? "s" : ""} enregistrée${entries.length > 1 ? "s" : ""}`;
+  const table = document.createElement("table");
+  table.className = "history-table";
+  table.innerHTML = `
+    <thead>
+      <tr><th>Date</th><th>Évolution</th><th>Joueur</th><th>Notes</th><th></th></tr>
+    </thead>
+    <tbody></tbody>
+  `;
+  const tbody = table.querySelector("tbody");
+  for (const e of entries) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${formatDate(e.dateApplied)}</td>
+      <td>${e.evolutionName || `#${e.evolutionId}`}</td>
+      <td></td>
+      <td class="notes">${e.notes || "-"}</td>
+      <td></td>
+    `;
+    const playerCell = tr.children[2];
+    if (e.playerName) {
+      const playerBtn = document.createElement("button");
+      playerBtn.type = "button";
+      playerBtn.className = "player-link";
+      playerBtn.textContent = e.playerName;
+      playerBtn.title = "Voir les stats et l'historique de ce joueur";
+      playerBtn.addEventListener("click", () => openPlayerModal(e));
+      playerCell.appendChild(playerBtn);
+    } else {
+      playerCell.textContent = "-";
+    }
+    const undoBtn = document.createElement("button");
+    undoBtn.type = "button";
+    undoBtn.className = "undo-btn";
+    undoBtn.textContent = "Annuler";
+    undoBtn.addEventListener("click", () => undoHistoryEntry(e.id, undoBtn));
+    tr.lastElementChild.appendChild(undoBtn);
+    tbody.appendChild(tr);
+  }
+  historyContent.innerHTML = "";
+  historyContent.appendChild(table);
+}
+
+async function loadHistory() {
+  historyContent.innerHTML = `<div class="hint">Chargement…</div>`;
+  historyCount.textContent = "";
+  try {
+    const res = await fetch("/api/history", { signal: AbortSignal.timeout(3000) });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const entries = await res.json();
+    historyEntries = entries;
+    rebuildEvolvedPlayerKeys();
+    if (filterEvolvedOnly.checked) updatePlayerResults();
+    renderHistory(entries);
+  } catch (err) {
+    historyContent.innerHTML = `<div class="hint">Serveur local non disponible — lance record_server.py pour voir ton historique d'évolutions.</div>`;
+  }
+}
+
+refreshHistoryBtn.addEventListener("click", loadHistory);
+
+// Charge l'historique en tache de fond des le demarrage (sans toucher a
+// l'onglet "Mes evolutions") pour que le filtre "deja evolues" du Simulateur
+// soit utilisable sans avoir a d'abord visiter cet onglet.
+async function loadHistoryEntriesSilently() {
+  try {
+    const res = await fetch("/api/history", { signal: AbortSignal.timeout(1200) });
+    if (!res.ok) return;
+    historyEntries = await res.json();
+    rebuildEvolvedPlayerKeys();
+  } catch (err) {
+    // serveur local non disponible : le filtre restera vide jusqu'a un chargement reussi
+  }
+}
+
+async function init() {
+  await mergeLiveUsage();
+  await loadHistoryEntriesSilently();
+  rebuildEvoSelectOptions();
+  render();
+}
+
+init();
+</script>
+</body>
+</html>
