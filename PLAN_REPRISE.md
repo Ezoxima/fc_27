@@ -138,6 +138,8 @@ Légende priorité : 🔴 bloquant / 🟠 important / 🟡 amélioration.
 
 > **Décisions du 05/10** : D6 oui · D5 git oui · D4 zip puis suppression (zip fait : `../fut27_archive_20261005.zip`, suppression de `fut27/` refusée par le garde-fou, à faire à la main) · D1 option A · D2 tranchée (Midfield Glow Up **terminée**) · D3 à vérifier.
 >
+> **Avancement 05/10 : Phase 3 terminée** — `/api/usage` renvoie aussi les expirées (+`active`), enregistrement/annulation rafraîchissent historique, usages et sélecteur, échappement HTML, libellé/style du toggle, tri stable. Testé dans le navigateur : T3, T4, T7 OK. Ménage 6.1-6.4 fait (zip + suppression `fut27/`, git initialisé).
+>
 > **Avancement 05/10 : Phase 2 terminée** — sauvegarde `fut27.backup-20261005.db` ; évolutions (+Goal Guardian 2538, Regista Realm 2537, Wing Specialization 2534, + 3 via objectifs ; expirées : Repeat Delivery, Frontline Paradox, Gallery Excellence) ; cartes via `scrape_players.py --only-new` (+1 208 traitées, 6.1 fait, 5.1 ON CONFLICT corrigé) ; 89 sous-stats ; club : Regista Realm (Xavi Espart, 0/3) enregistrée ; `simulateur.html` régénéré. Id 2494 (Carlos Espí) inconnue en base. 2.6 (Excel) non fait.
 >
 > **Avancement 05/10 : Phase 1 terminée et testée** (curl : `.env`/`fut27.db` → 404, `text/plain` → 415, Origin/Host étrangers → 403, simulateur → 200). `.gitignore` créé avec `fut27.db` inclus (à retirer si D5 = oui).
@@ -181,20 +183,20 @@ Légende priorité : 🔴 bloquant / 🟠 important / 🟡 amélioration.
 
 **But : l'affichage reste juste après chaque action, sans recharger la page.**
 
-- [ ] 🟠 **3.1 `/api/usage` ignore les évolutions expirées** (`record_server.py:119`, `include_inactive=False`, et le champ `active` n'est pas renvoyé).
+- [x] 🟠 **3.1 `/api/usage` ignore les évolutions expirées** (`record_server.py:119`, `include_inactive=False`, et le champ `active` n'est pas renvoyé).
   - Conséquence : la fusion par id (`simulateur_template.html:1107-1124`) ne met jamais à jour l'usage des évolutions expirées, et une évolution expirée **après** le build reste proposée.
   - Correctif : `include_inactive=True`, renvoyer `active`, fusionner `active` côté page.
-- [ ] 🟠 **3.2 Double comptage après enregistrement** (`recordEvolutionUsage`, `simulateur_template.html:949-976`).
+- [x] 🟠 **3.2 Double comptage après enregistrement** (`recordEvolutionUsage`, `simulateur_template.html:949-976`).
   - Elle ne recharge pas `historyEntries`. Après un passage par « Mes évolutions », le `render()` suivant rejoue l'évolution depuis l'historique (`:1008-1020`) **et** la garde dans la chaîne → appliquée deux fois. Le filtre « déjà évolués » est aussi en retard.
   - Correctif : après succès, recharger l'historique et retirer l'étape enregistrée de la chaîne (ou l'exclure du rejeu).
-- [ ] 🟠 **3.3 « Annuler » ne rafraîchit pas les usages** (`undoHistoryEntry`, `:1262-1277`).
+- [x] 🟠 **3.3 « Annuler » ne rafraîchit pas les usages** (`undoHistoryEntry`, `:1262-1277`).
   - Correctif : rappeler `/api/usage`, puis reconstruire le sélecteur avec `rebuildEvoSelectOptions()`, puis `render()`.
-- [ ] 🟡 **3.4 Petits défauts UI**
+- [x] 🟡 **3.4 Petits défauts UI**
   - Bouton toggle sans libellé avant la fin de `init()` → texte par défaut dans le HTML.
   - Pas de style `:disabled` sur le toggle.
   - Tri du modal sans départage par id (`:1184`) → ordre instable pour des dates identiques.
   - Noms et notes injectés via `innerHTML` → passer par `textContent` (risque faible, local).
-- [ ] 🟡 **3.5 Mettre à jour `PLAN_record_server.md:52-56`** ou l'archiver (il décrit l'ancien contrat de `/api/usage`).
+- [x] 🟡 **3.5 Mettre à jour `PLAN_record_server.md:52-56`** ou l'archiver (il décrit l'ancien contrat de `/api/usage`).
 
 **Vérification** : scénarios T3 à T6 du plan de test (section 4).
 
@@ -244,13 +246,13 @@ Dépend de D1, D2, D3.
 
 ### Phase 6 — Ménage
 
-- [ ] 🟠 **6.1 Récupérer `scrape_new_only.py`** (rescrape limité aux paliers d'overall modifiés).
+- [x] 🟠 **6.1 Récupérer `scrape_new_only.py`** (rescrape limité aux paliers d'overall modifiés).
   - Il n'existe que dans le scratchpad temporaire de la session du 30/09 « Mise à jour nouveaux joueurs ».
   - Si introuvable : le réintégrer comme option `--only-new` de `scrape_players.py`.
-- [ ] 🟠 **6.2 Dossier `fut27/`** (147 Mo) : supprimer ou zipper (D4).
+- [x] 🟠 **6.2 Dossier `fut27/`** (147 Mo) : supprimer ou zipper (D4).
   - Il ne contient rien d'unique : scripts identiques ou plus anciens, base du 28/09 sans usages, 6 `rapport_evolutions_v*.xlsx`, logs, 3 verrous `~$*.xlsx`.
-- [ ] 🟡 **6.3 Racine** : supprimer `__pycache__/` et `.ruff_cache/` (régénérés automatiquement).
-- [ ] 🟡 **6.4 `PLAN_record_server.md`** → déplacer dans `docs/archive/` (terminé ; numéros de ligne périmés).
+- [x] 🟡 **6.3 Racine** : supprimer `__pycache__/` et `.ruff_cache/` (régénérés automatiquement).
+- [x] 🟡 **6.4 `PLAN_record_server.md`** → déplacer dans `docs/archive/` (terminé ; numéros de ligne périmés).
 - [ ] 🟡 **6.5 `my_club_example.csv`** : à garder seulement si `optimize.py` est conservé.
 - [ ] 🟡 **6.6 Style** : `ruff check --fix .` (2 remarques).
 

@@ -338,6 +338,7 @@
     font-size: 12px;
   }
   .undo-btn:hover { background: rgba(224,85,79,0.15); }
+  #toggleUnavailable:disabled { opacity: 0.45; cursor: not-allowed; }
 
   .player-link {
     background: transparent;
@@ -437,7 +438,7 @@
       Joueurs déjà évolués uniquement
     </label>
     <select id="evoSelect"><option value="">-- Ajouter une évolution à la chaîne --</option></select>
-    <button id="toggleUnavailable" type="button" aria-pressed="false" title="Afficher ou masquer les évolutions épuisées ou expirées dans la liste"></button>
+    <button id="toggleUnavailable" type="button" aria-pressed="false" title="Afficher ou masquer les évolutions épuisées ou expirées dans la liste">Afficher épuisées/expirées</button>
     <button id="clearChain" type="button">Vider la chaîne</button>
   </div>
 
@@ -718,8 +719,8 @@ function renderInfoCard(player, before) {
 function renderCard(container, plateEl, player, before) {
   plateEl.innerHTML = `
     <span class="ovr" style="color:${statColor(player.ovr)}">${player.ovr}</span>
-    <span class="name">${player.name}</span>
-    <span class="pos">${player.pos}${player.alt.length ? " / " + player.alt.join(", ") : ""}</span>
+    <span class="name">${esc(player.name)}</span>
+    <span class="pos">${esc(player.pos)}${player.alt.length ? " / " + esc(player.alt.join(", ")) : ""}</span>
   `;
   const existingInfo = plateEl.nextElementSibling;
   if (existingInfo && existingInfo.classList.contains("info-card-wrap")) existingInfo.remove();
@@ -806,6 +807,11 @@ function showToast(message) {
 
 // Par defaut le selecteur ne propose que les evolutions encore utilisables ;
 // le bouton a cote remet les epuisees / expirees (utile pour rejouer un rattrapage).
+// Echappe le texte venant de la base avant de l'injecter via innerHTML.
+function esc(value) {
+  return String(value ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
 let showUnavailableEvos = false;
 const isEvoUnavailable = evo => evo.active === false || evo.remainingUses <= 0;
 
@@ -893,7 +899,7 @@ function updatePlayerResults() {
   }
   for (const p of currentMatches) {
     const div = document.createElement("div");
-    div.innerHTML = `${p.name} <span class="sub">(${p.pos}, ${p.ovr} OVR, ${p.club || p.league || ""})</span>`;
+    div.innerHTML = `${esc(p.name)} <span class="sub">(${esc(p.pos)}, ${p.ovr} OVR, ${esc(p.club || p.league || "")})</span>`;
     div.addEventListener("click", () => selectPlayer(p));
     playerResults.appendChild(div);
   }
@@ -946,7 +952,7 @@ function removeStep(index) {
   render();
 }
 
-async function recordEvolutionUsage(evoId, playerEaId, playerName, button, statusEl) {
+async function recordEvolutionUsage(evoId, playerEaId, playerName, stepIndex, button, statusEl) {
   button.disabled = true;
   button.textContent = "Enregistrement…";
   statusEl.textContent = "";
@@ -965,7 +971,12 @@ async function recordEvolutionUsage(evoId, playerEaId, playerName, button, statu
       evo.usedCount = data.usedCount;
       evo.remainingUses = data.remainingUses;
     }
+    // L'etape est desormais dans l'historique (rejouee par render) : on la
+    // retire de la chaine pour ne pas l'appliquer deux fois.
+    chain.splice(stepIndex, 1);
+    await loadHistoryEntriesSilently();
     rebuildEvoSelectOptions();
+    if (filterEvolvedOnly.checked) updatePlayerResults();
     render();
     showToast(`✓ "${evo ? evo.name : "Évolution"}" enregistrée pour ${playerName}`);
   } catch (err) {
@@ -981,7 +992,7 @@ function renderChainChips() {
     const evo = DATA.evolutions.find(e => e.id === evoId);
     const chip = document.createElement("div");
     chip.className = "chain-chip";
-    chip.innerHTML = `<span class="step-num">${i + 1}.</span> ${evo ? evo.name : "?"} <button type="button">x</button>`;
+    chip.innerHTML = `<span class="step-num">${i + 1}.</span> ${evo ? esc(evo.name) : "?"} <button type="button">x</button>`;
     chip.querySelector("button").addEventListener("click", () => removeStep(i));
     chainListEl.appendChild(chip);
   });
@@ -1034,7 +1045,7 @@ function render() {
 
     const header = document.createElement("div");
     header.className = "step-header";
-    header.innerHTML = `<span class="step-num">Étape ${i + 1}</span><span class="step-name">${evo.name}</span>`;
+    header.innerHTML = `<span class="step-num">Étape ${i + 1}</span><span class="step-name">${esc(evo.name)}</span>`;
     const recordBtn = document.createElement("button");
     recordBtn.type = "button";
     recordBtn.textContent = "Enregistrer cette évolution";
@@ -1052,7 +1063,7 @@ function render() {
 
     const stepPlayerBefore = current;
     recordBtn.addEventListener("click", () => {
-      recordEvolutionUsage(evo.id, stepPlayerBefore.eaId, stepPlayerBefore.name, recordBtn, recordStatus);
+      recordEvolutionUsage(evo.id, stepPlayerBefore.eaId, stepPlayerBefore.name, i, recordBtn, recordStatus);
     });
 
     const summary = document.createElement("div");
@@ -1115,6 +1126,7 @@ async function mergeLiveUsage() {
       if (l) {
         evo.usedCount = l.usedCount;
         evo.remainingUses = l.remainingUses;
+        if (typeof l.active === "boolean") evo.active = l.active;
       }
     }
   } catch (err) {
@@ -1181,7 +1193,7 @@ function renderPlayerModalHistory(entry) {
   const related = historyEntries
     .filter(e => sameHistoryPlayer(e, entry))
     .slice()
-    .sort((a, b) => (a.dateApplied || "").localeCompare(b.dateApplied || ""));
+    .sort((a, b) => (a.dateApplied || "").localeCompare(b.dateApplied || "") || a.id - b.id);
 
   playerModalHistory.innerHTML = "";
   if (!related.length) {
@@ -1195,9 +1207,9 @@ function renderPlayerModalHistory(entry) {
     item.className = "evo-history-item";
     item.innerHTML = `
       <div class="evo-history-main">
-        <span class="evo-history-name">${e.evolutionName || `#${e.evolutionId}`}</span>
+        <span class="evo-history-name">${esc(e.evolutionName || `#${e.evolutionId}`)}</span>
         <span class="evo-history-date">${formatDate(e.dateApplied)}</span>
-        ${e.notes ? `<span class="evo-history-notes">${e.notes}</span>` : ""}
+        ${e.notes ? `<span class="evo-history-notes">${esc(e.notes)}</span>` : ""}
       </div>
     `;
     const undoBtn = document.createElement("button");
@@ -1269,6 +1281,10 @@ async function undoHistoryEntry(id, button) {
     if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
     showToast("✓ Enregistrement annulé");
     await loadHistory();
+    // le quota de l'evolution annulee change : recharger les usages et reconstruire la liste
+    await mergeLiveUsage();
+    rebuildEvoSelectOptions();
+    render();
   } catch (err) {
     button.disabled = false;
     button.textContent = "Annuler";
@@ -1296,9 +1312,9 @@ function renderHistory(entries) {
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td>${formatDate(e.dateApplied)}</td>
-      <td>${e.evolutionName || `#${e.evolutionId}`}</td>
+      <td>${esc(e.evolutionName || `#${e.evolutionId}`)}</td>
       <td></td>
-      <td class="notes">${e.notes || "-"}</td>
+      <td class="notes">${esc(e.notes || "-")}</td>
       <td></td>
     `;
     const playerCell = tr.children[2];

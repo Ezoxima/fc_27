@@ -24,7 +24,12 @@ STATIC_ALLOWED = {"/", "/simulateur.html"}
 
 
 def usage_payload(evo: dict) -> dict:
-    return {"id": evo["id"], "usedCount": evo["used_count"], "remainingUses": evo["remaining_uses"]}
+    return {
+        "id": evo["id"],
+        "usedCount": evo["used_count"],
+        "remainingUses": evo["remaining_uses"],
+        "active": bool(evo.get("active")),
+    }
 
 
 def load_history(conn: sqlite3.Connection) -> list[dict]:
@@ -141,7 +146,7 @@ class Handler(SimpleHTTPRequestHandler):
     def _handle_usage(self) -> None:
         conn = sqlite3.connect(DB_PATH, timeout=5)
         try:
-            evolutions = load_evolutions(conn, include_inactive=False)
+            evolutions = load_evolutions(conn, include_inactive=True)
         finally:
             conn.close()
         self._send_json(200, [usage_payload(e) for e in evolutions])
