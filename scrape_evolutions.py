@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS evolutions (
     upgrades_text TEXT,            -- texte brut des gains
     upgrades_json TEXT,            -- [{"stat": "OVR", "delta": 5}, ...] (branche principale)
     levels_json TEXT,              -- paliers et options (cf. evo_levels.py)
+    end_time TEXT,                 -- date de fin ISO UTC (endTime de la page detail), NULL si inconnue
     coin_cost INTEGER,             -- cout en pieces FUT (NULL/0 si gratuite)
     point_cost INTEGER,            -- cout en FC Points (NULL/0 si gratuite)
     granted_playstyles TEXT,       -- liste JSON des PlayStyles accordes (pas visible sur la page liste,
@@ -201,11 +202,24 @@ def parse_upgrades(container) -> list[dict]:
 
 
 REPEATABILITY_RE = re.compile(r"repeatabilityCount:(-?\d+)")
+END_TIME_RE = re.compile(r'endTime:"([^"]+)"')
+
+
+def parse_end_time(html: str) -> datetime | None:
+    """Date de fin (endTime) annoncee par la page detail, en UTC ; None si absente."""
+    m = END_TIME_RE.search(html)
+    if not m:
+        return None
+    try:
+        end = datetime.fromisoformat(m.group(1).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return end if end.tzinfo else end.replace(tzinfo=timezone.utc)
 
 
 def scrape_detail_page_extras(
     url: str, session: requests.Session
-) -> tuple[list[str], int | None, list[dict] | None]:
+) -> tuple[list[str], int | None, list[dict] | None, str | None]:
     """Deux infos ne sont visibles QUE sur la page detail de l'evolution (pas
     sur la page liste /evolutions/) :
     - les PlayStyles accordes : une icone (div title="<Nom du PlayStyle>",
@@ -219,7 +233,7 @@ def scrape_detail_page_extras(
         resp.raise_for_status()
         html = resp.text
     except requests.RequestException:
-        return [], None, None
+        return [], None, None, None
 
     soup = BeautifulSoup(html, "html.parser")
     names = {
@@ -231,7 +245,10 @@ def scrape_detail_page_extras(
     m = REPEATABILITY_RE.search(html)
     repeatability_count = int(m.group(1)) if m else None
 
-    return sorted(names), repeatability_count, parse_levels_from_html(html)
+    end = parse_end_time(html)
+    end_time = end.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if end else None
+
+    return sorted(names), repeatability_count, parse_levels_from_html(html), end_time
 
 
 OBJECTIVE_LINK_RE = re.compile(r"/objectives/[a-z-]+/(\d+)-([a-z0-9-]+)/")
@@ -336,9 +353,6 @@ def scrape_evolution_detail_page(evo_id: int, slug: str, session: requests.Sessi
     }
 
 
-END_TIME_RE = re.compile(r'endTime:"([^"]+)"')
-
-
 def evolution_is_live(url: str, session: requests.Session) -> bool:
     """Vrai si la page detail annonce une date de fin (endTime) dans le futur."""
     try:
@@ -346,14 +360,8 @@ def evolution_is_live(url: str, session: requests.Session) -> bool:
         resp.raise_for_status()
     except requests.RequestException:
         return False
-    m = END_TIME_RE.search(resp.text)
-    if not m:
-        return False
-    try:
-        end = datetime.fromisoformat(m.group(1).replace("Z", "+00:00"))
-    except ValueError:
-        return False
-    return end > datetime.now(timezone.utc)
+    end = parse_end_time(resp.text)
+    return end is not None and end > datetime.now(timezone.utc)
 
 
 def discover_objective_evolutions(
@@ -392,8 +400,8 @@ def discover_objective_evolutions(
         if card is None:
             print(f"  echec scraping evolution id={evo_id} ({evo_slug})", file=sys.stderr)
             continue
-        granted_ps, repeatability_count, levels = scrape_detail_page_extras(card["url"], session)
-        detail = build_record(card, granted_ps, repeatability_count, levels)
+        granted_ps, repeatability_count, levels, end_time = scrape_detail_page_extras(card["url"], session)
+        detail = build_record(card, granted_ps, repeatability_count, levels, end_time)
         upsert_evolution(conn, detail)
         conn.commit()
         new_ids.append(evo_id)
@@ -407,7 +415,7 @@ def discover_objective_evolutions(
 
 def build_record(
     card: dict, granted_playstyles: list[str], repeatability_count: int | None,
-    levels: list[dict] | None = None,
+    levels: list[dict] | None = None, end_time: str | None = None,
 ) -> dict:
     req_container = card["req_container"]
     upg_container = card["upg_container"]
@@ -424,6 +432,7 @@ def build_record(
         "upgrades_text": upg_container.get_text(" ", strip=True) if upg_container else None,
         "upgrades_json": json.dumps(upgrades_json, ensure_ascii=False),
         "levels_json": json.dumps(levels, ensure_ascii=False) if levels else None,
+        "end_time": end_time,
         "coin_cost": card["coin_cost"],
         "point_cost": card["point_cost"],
         "granted_playstyles": json.dumps(granted_playstyles, ensure_ascii=False),
@@ -438,11 +447,11 @@ def upsert_evolution(conn: sqlite3.Connection, e: dict) -> None:
         """
         INSERT INTO evolutions (id, slug, name, description, requirements_text,
                                  requirements_json, upgrades_text, upgrades_json, levels_json,
-                                 coin_cost, point_cost, granted_playstyles,
+                                 end_time, coin_cost, point_cost, granted_playstyles,
                                  repeatability_count, active, url)
         VALUES (:id, :slug, :name, :description, :requirements_text,
                 :requirements_json, :upgrades_text, :upgrades_json, :levels_json,
-                :coin_cost, :point_cost, :granted_playstyles,
+                :end_time, :coin_cost, :point_cost, :granted_playstyles,
                 :repeatability_count, :active, :url)
         ON CONFLICT(id) DO UPDATE SET
             name=excluded.name, description=excluded.description,
@@ -451,6 +460,7 @@ def upsert_evolution(conn: sqlite3.Connection, e: dict) -> None:
             upgrades_text=excluded.upgrades_text,
             upgrades_json=excluded.upgrades_json,
             levels_json=COALESCE(excluded.levels_json, evolutions.levels_json),
+            end_time=COALESCE(excluded.end_time, evolutions.end_time),
             coin_cost=excluded.coin_cost,
             point_cost=excluded.point_cost,
             granted_playstyles=excluded.granted_playstyles,
@@ -463,21 +473,29 @@ def upsert_evolution(conn: sqlite3.Connection, e: dict) -> None:
 
 
 def backfill_levels(conn: sqlite3.Connection, session: requests.Session) -> None:
-    """Complete les paliers des evolutions deja en base qui n'en ont pas
-    (expirees : jamais re-scrapees depuis la liste, ou base anterieure aux paliers)."""
-    rows = conn.execute("SELECT id, url FROM evolutions WHERE levels_json IS NULL AND url IS NOT NULL").fetchall()
-    for evo_id, url in rows:
+    """Complete les paliers et la date de fin des evolutions deja en base qui
+    n'en ont pas (expirees : jamais re-scrapees depuis la liste, ou base
+    anterieure aux paliers / aux dates de fin)."""
+    rows = conn.execute(
+        "SELECT id, url, levels_json IS NULL FROM evolutions "
+        "WHERE (levels_json IS NULL OR end_time IS NULL) AND url IS NOT NULL"
+    ).fetchall()
+    for evo_id, url, missing_levels in rows:
         try:
-            _, _, levels = scrape_detail_page_extras(url, session)
+            _, _, levels, end_time = scrape_detail_page_extras(url, session)
         except Exception as exc:  # noqa: BLE001
-            print(f"  paliers id={evo_id} ECHEC: {exc}", file=sys.stderr)
+            print(f"  paliers/date de fin id={evo_id} ECHEC: {exc}", file=sys.stderr)
             continue
-        if levels:
-            conn.execute("UPDATE evolutions SET levels_json = ? WHERE id = ?",
-                         (json.dumps(levels, ensure_ascii=False), evo_id))
-            print(f"  paliers recuperes pour id={evo_id}")
-        else:
-            print(f"  paliers introuvables pour id={evo_id} (page retiree ?)")
+        if missing_levels:
+            if levels:
+                conn.execute("UPDATE evolutions SET levels_json = ? WHERE id = ?",
+                             (json.dumps(levels, ensure_ascii=False), evo_id))
+                print(f"  paliers recuperes pour id={evo_id}")
+            else:
+                print(f"  paliers introuvables pour id={evo_id} (page retiree ?)")
+        if end_time:
+            conn.execute("UPDATE evolutions SET end_time = ? WHERE id = ?", (end_time, evo_id))
+            print(f"  date de fin recuperee pour id={evo_id} : {end_time}")
         time.sleep(0.3)
 
 
@@ -508,8 +526,8 @@ def main() -> None:
     current_ids = []
     for i, card in enumerate(cards, start=1):
         try:
-            granted_ps, repeatability_count, levels = scrape_detail_page_extras(card["url"], session)
-            detail = build_record(card, granted_ps, repeatability_count, levels)
+            granted_ps, repeatability_count, levels, end_time = scrape_detail_page_extras(card["url"], session)
+            detail = build_record(card, granted_ps, repeatability_count, levels, end_time)
             upsert_evolution(conn, detail)
             conn.commit()
             current_ids.append(card["id"])

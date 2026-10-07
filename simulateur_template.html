@@ -418,6 +418,26 @@
   .evo-history-item .evo-history-name { font-weight: bold; }
   .evo-history-item .evo-history-date { color: var(--text-dim); font-size: 12px; }
   .evo-history-item .evo-history-notes { color: var(--text-dim); font-size: 12px; }
+
+  /* --- onglet Recherche --- */
+  .search-filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; margin-bottom: 12px; }
+  .search-filters label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; }
+  .search-filters input, .search-filters select, .search-filters textarea { font-size: 13px; }
+  .search-filters input[type=number] { width: 70px; }
+  .search-filters textarea { width: 240px; height: 58px; resize: vertical; }
+  .chips { display: flex; flex-wrap: wrap; gap: 4px; max-width: 220px; }
+  .chips:empty { display: none; }
+  .chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 10px; background: var(--panel-2); border: 1px solid var(--border); color: var(--text); font-size: 12px; text-transform: none; letter-spacing: 0; cursor: pointer; }
+  .chip:hover { border-color: var(--red); }
+  .search-evo-info { margin-bottom: 12px; padding: 10px 14px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; font-size: 13px; }
+  .search-evo-info div { margin: 2px 0; }
+  table.search-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.search-table th, table.search-table td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  table.search-table th { color: var(--text-dim); font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; cursor: pointer; user-select: none; position: sticky; top: 0; background: var(--bg); }
+  table.search-table tbody tr { cursor: pointer; }
+  table.search-table tbody tr:hover { background: var(--panel-2); }
+  .gain-pos { color: var(--green); font-weight: bold; }
+  .search-missing { margin-top: 10px; color: var(--red); font-size: 13px; }
 </style>
 </head>
 <body>
@@ -426,6 +446,7 @@
 
 <div class="tabs">
   <button type="button" class="tab-btn active" data-tab="simulateur">Simulateur</button>
+  <button type="button" class="tab-btn" data-tab="search">Recherche</button>
   <button type="button" class="tab-btn" data-tab="history">Mes évolutions</button>
 </div>
 
@@ -447,6 +468,44 @@
   <div id="chainList" class="chain-list"></div>
 
   <div id="stepsContainer"></div>
+</div>
+
+<div id="viewSearch" class="view">
+  <div class="search-filters">
+    <label>Évolution (éligibilité)
+      <select id="sEvo"><option value="">-- Toute la base --</option></select>
+    </label>
+    <label>Nom
+      <input type="text" id="sName" placeholder="Nom du joueur">
+    </label>
+    <label>Liste de noms (un par ligne)
+      <textarea id="sList" placeholder="Mbappé&#10;Lamine Yamal&#10;..."></textarea>
+    </label>
+    <label>Poste
+      <select id="sPos"><option value="">Tous</option></select>
+    </label>
+    <label>Note min <input type="number" id="sMin" min="40" max="99"></label>
+    <label>Note max <input type="number" id="sMax" min="40" max="99"></label>
+    <label>Clubs <input type="text" id="sClub" list="dlClub" placeholder="Choisir (Entrée = ajouter)"><div class="chips" id="sClubChips"></div></label>
+    <label>Ligues <input type="text" id="sLeague" list="dlLeague" placeholder="Choisir (Entrée = ajouter)"><div class="chips" id="sLeagueChips"></div></label>
+    <label>Nations <input type="text" id="sNation" list="dlNation" placeholder="Choisir (Entrée = ajouter)"><div class="chips" id="sNationChips"></div></label>
+    <label>Rareté
+      <select id="sRarity"><option value="">Toutes</option></select>
+    </label>
+    <label class="evolved-filter" style="flex-direction:row;align-items:center;gap:6px;text-transform:none;font-size:13px">
+      <input type="checkbox" id="sMine"> Mes joueurs évolués uniquement
+    </label>
+    <label class="evolved-filter" style="flex-direction:row;align-items:center;gap:6px;text-transform:none;font-size:13px" title="Remplace chaque carte évoluée par sa version après toutes tes évolutions enregistrées">
+      <input type="checkbox" id="sEvolvedVersion"> Utiliser leur version évoluée
+    </label>
+    <button type="button" id="sReset">Réinitialiser</button>
+    <button type="button" id="sCsv" title="Exporter le résultat affiché en CSV">Export CSV</button>
+  </div>
+  <datalist id="dlClub"></datalist><datalist id="dlLeague"></datalist><datalist id="dlNation"></datalist>
+  <div id="sEvoInfo"></div>
+  <div id="sCount" class="history-count" style="margin-bottom:8px"></div>
+  <div id="sTable"></div>
+  <div id="sMissing" class="search-missing"></div>
 </div>
 
 <div id="viewHistory" class="view">
@@ -756,6 +815,19 @@ function formatCost(evo) {
   if (evo.coinCost) bits.push(`${evo.coinCost.toLocaleString("fr-FR")} pièces`);
   if (evo.pointCost) bits.push(`${evo.pointCost.toLocaleString("fr-FR")} FC Points`);
   return bits.length ? bits.join(" + ") : "Gratuite";
+}
+
+// Date de fin d'une evolution (evo.endTime, ISO UTC) : "15 nov. 2026 (dans 39 j)".
+function formatEndTime(evo, withRelative = true) {
+  if (!evo.endTime) return "date inconnue";
+  const end = new Date(evo.endTime);
+  if (isNaN(end.getTime())) return "date inconnue";
+  const date = end.toLocaleDateString("fr-FR", { day: "numeric", month: "short", year: "numeric" });
+  if (!withRelative) return date;
+  const days = Math.ceil((end.getTime() - Date.now()) / 86400000);
+  if (days < 0) return `${date} (expirée)`;
+  if (days === 0) return `${date} (aujourd'hui)`;
+  return `${date} (dans ${days} j)`;
 }
 
 function formatReq(req) {
@@ -1176,7 +1248,7 @@ async function mergeLiveUsage() {
 
 // --- onglets ---
 const tabBtns = document.querySelectorAll(".tab-btn");
-const views = { simulateur: document.getElementById("viewSimulateur"), history: document.getElementById("viewHistory") };
+const views = { simulateur: document.getElementById("viewSimulateur"), search: document.getElementById("viewSearch"), history: document.getElementById("viewHistory") };
 
 tabBtns.forEach(btn => {
   btn.addEventListener("click", () => {
@@ -1185,7 +1257,224 @@ tabBtns.forEach(btn => {
     for (const key in views) views[key].classList.remove("active");
     views[btn.dataset.tab].classList.add("active");
     if (btn.dataset.tab === "history") loadHistory();
+    if (btn.dataset.tab === "search") loadHistoryEntriesSilently().then(runSearch);
   });
+});
+
+// --- recherche de joueurs (liste + eligibilite aux evolutions) ---
+const SEARCH_LIMIT = 500;
+const SEARCH_INPUT_IDS = ["sMine", "sEvolvedVersion", "sEvo", "sName", "sList", "sPos", "sMin", "sMax", "sClub", "sLeague", "sNation", "sRarity"];
+const SEARCH_TEXT_COLS = ["name", "pos", "club", "league", "nation", "rarity"];
+const sEl = id => document.getElementById(id);
+const norm = t => String(t || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim();
+let sSort = { key: null, dir: -1 };
+let sRows = [];
+
+// Clubs / ligues / nations : plusieurs valeurs choisies (puces, correspondance exacte) en plus
+// du texte en cours de saisie (correspondance partielle). Un joueur passe s'il en matche une.
+const MULTI_FILTERS = { sClub: "dlClub", sLeague: "dlLeague", sNation: "dlNation" };
+const sChosen = { sClub: [], sLeague: [], sNation: [] };
+const sKnown = { sClub: [], sLeague: [], sNation: [] };
+
+function renderChips(id) {
+  sEl(id + "Chips").innerHTML = sChosen[id]
+    .map((v, i) => `<span class="chip" data-i="${i}" title="Retirer">${esc(v)} ×</span>`).join("");
+}
+
+// Transforme le texte saisi en puce s'il correspond exactement a une valeur connue.
+function addChip(id) {
+  const typed = norm(sEl(id).value);
+  const value = typed && sKnown[id].find(v => norm(v) === typed);
+  if (!value) return false;
+  if (!sChosen[id].includes(value)) sChosen[id].push(value);
+  sEl(id).value = "";
+  renderChips(id);
+  return true;
+}
+
+function multiMatcher(id) {
+  const chosen = sChosen[id].map(norm), typed = norm(sEl(id).value);
+  if (!chosen.length && !typed) return () => true;
+  return v => { const n = norm(v); return chosen.includes(n) || (typed !== "" && n.includes(typed)); };
+}
+
+(function initSearch() {
+  const uniq = f => [...new Set(DATA.players.map(p => p[f]).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const fill = (id, vals) => { sEl(id).innerHTML = vals.map(v => `<option value="${esc(v)}">`).join(""); };
+  sKnown.sClub = uniq("club"); sKnown.sLeague = uniq("league"); sKnown.sNation = uniq("nation");
+  fill("dlClub", sKnown.sClub); fill("dlLeague", sKnown.sLeague); fill("dlNation", sKnown.sNation);
+  const addOpts = (id, vals) => {
+    for (const v of vals) {
+      const o = document.createElement("option");
+      o.value = v;
+      o.textContent = v;
+      sEl(id).appendChild(o);
+    }
+  };
+  addOpts("sPos", [...new Set(DATA.players.flatMap(p => [p.pos, ...p.alt]).filter(Boolean))].sort());
+  addOpts("sRarity", uniq("rarity"));
+  // tri par date d'expiration croissante (la plus proche d'abord), dates inconnues a la fin
+  const byEnd = e => e.endTime ? new Date(e.endTime).getTime() : Infinity;
+  const searchEvos = DATA.evolutions.filter(e => !isEvoUnavailable(e)).sort((a, b) => {
+    const x = byEnd(a), y = byEnd(b);
+    return x === y ? 0 : x < y ? -1 : 1;
+  });
+  for (const evo of searchEvos) {
+    const o = document.createElement("option");
+    o.value = evo.id;
+    o.textContent = evo.name + (formatCost(evo) !== "Gratuite" ? "  [PAYANTE]" : "") +
+      (evo.endTime ? `  — fin ${formatEndTime(evo, false)}` : "");
+    sEl("sEvo").appendChild(o);
+  }
+})();
+
+// Evolutions enregistrees par joueur (cle = playerIdentityKey), triees par date.
+function myEvolutionsByPlayer() {
+  const map = new Map();
+  for (const e of historyEntries) {
+    const k = historyEntryIdentityKey(e);
+    if (!k) continue;
+    if (!map.has(k)) map.set(k, []);
+    map.get(k).push(e);
+  }
+  for (const list of map.values()) {
+    list.sort((a, b) => (a.dateApplied || "").localeCompare(b.dateApplied || "") || a.id - b.id);
+  }
+  return map;
+}
+
+function runSearch() {
+  const myEvos = myEvolutionsByPlayer();
+  const onlyMine = sEl("sMine").checked, useEvolved = sEl("sEvolvedVersion").checked;
+  const evo = DATA.evolutions.find(e => String(e.id) === sEl("sEvo").value) || null;
+  const gains = evo ? evoGains(evo, null, defaultChoices(evo)) : null;
+  const nameQ = norm(sEl("sName").value);
+  const listQ = sEl("sList").value.split(/[\n;,]+/).map(norm).filter(Boolean);
+  const pos = sEl("sPos").value;
+  const min = parseInt(sEl("sMin").value, 10), max = parseInt(sEl("sMax").value, 10);
+  const matchClub = multiMatcher("sClub"), matchLeague = multiMatcher("sLeague"), matchNation = multiMatcher("sNation");
+  const rarity = sEl("sRarity").value;
+
+  const listHits = new Array(listQ.length).fill(0);
+  const rows = [];
+  for (const base of DATA.players) {
+    const mine = myEvos.get(playerIdentityKey(base)) || [];
+    if (onlyMine && !mine.length) continue;
+    let p = base;
+    if (useEvolved) for (const h of mine) p = replayEntry(p, h) || p;
+    if (listQ.length) {
+      const n = norm(p.name);
+      let hit = false;
+      listQ.forEach((q, i) => { if (n.includes(q)) { listHits[i]++; hit = true; } });
+      if (!hit) continue;
+    }
+    if (nameQ && !norm(p.name).includes(nameQ)) continue;
+    if (pos && p.pos !== pos && !p.alt.includes(pos)) continue;
+    if (!isNaN(min) && p.ovr < min) continue;
+    if (!isNaN(max) && p.ovr > max) continue;
+    if (!matchClub(p.club) || !matchLeague(p.league) || !matchNation(p.nation)) continue;
+    if (rarity && p.rarity !== rarity) continue;
+    let after = null;
+    if (evo) {
+      if (checkEligibility(p, evo.req).length) continue;
+      after = applyUpgrades(p, gains.upgrades, gains.playstyles);
+    }
+    rows.push({ p, base, after, gain: after ? after.ovr - p.ovr : 0, nbEvos: mine.length });
+  }
+
+  const key = sSort.key || (evo ? "gain" : "ovr");
+  const dir = sSort.key ? sSort.dir : -1;
+  const val = r => ({
+    name: norm(r.p.name), pos: r.p.pos, ovr: r.p.ovr, final: r.after ? r.after.ovr : 0, gain: r.gain,
+    club: norm(r.p.club), league: norm(r.p.league), nation: norm(r.p.nation), rarity: r.p.rarity || "",
+    ps: (r.p.psPlus || []).length * 100 + (r.p.psNormal || []).length, evos: r.nbEvos,
+  })[key];
+  rows.sort((a, b) => {
+    const x = val(a), y = val(b);
+    return (x < y ? -1 : x > y ? 1 : 0) * dir || b.p.ovr - a.p.ovr;
+  });
+  sRows = rows;
+
+  sEl("sEvoInfo").innerHTML = evo
+    ? `<div class="search-evo-info"><div><b>${esc(evo.name)}</b> — ${formatCost(evo)}</div>
+       <div><b>Expire le :</b> ${esc(formatEndTime(evo))}</div>
+       <div><b>Conditions :</b> ${formatReq(evo.req)}</div>
+       <div><b>Gains :</b> ${formatUpgrades(gains.upgrades, gains.playstyles)}</div></div>`
+    : "";
+  const cols = [["name", "Nom"], ["pos", "Poste"], ["ovr", "Note"]];
+  if (evo) cols.push(["final", "Note finale"], ["gain", "Gain"]);
+  cols.push(["club", "Club"], ["league", "Ligue"], ["nation", "Nation"], ["rarity", "Rareté"], ["ps", "PS+ / PS"], ["evos", "Mes évos"]);
+  const shown = rows.slice(0, SEARCH_LIMIT);
+  sEl("sCount").textContent = `${rows.length} joueur(s)` + (evo ? " éligible(s)" : "") +
+    (rows.length > SEARCH_LIMIT ? ` — ${SEARCH_LIMIT} premiers affichés (affine les filtres)` : "");
+  const head = cols.map(([k, l]) => `<th data-k="${k}">${l}${key === k ? (dir < 0 ? " ▼" : " ▲") : ""}</th>`).join("");
+  const body = shown.map((r, i) => {
+    const p = r.p;
+    return `<tr data-i="${i}"><td>${esc(p.name)}</td><td>${esc(p.pos)}</td><td style="color:${statColor(p.ovr)}"><b>${p.ovr}</b></td>` +
+      (evo ? `<td style="color:${statColor(r.after.ovr)}"><b>${r.after.ovr}</b></td><td class="${r.gain > 0 ? "gain-pos" : ""}">${r.gain > 0 ? "+" : ""}${r.gain}</td>` : "") +
+      `<td>${esc(p.club)}</td><td>${esc(p.league)}</td><td>${esc(p.nation)}</td><td>${esc(p.rarity)}</td>` +
+      `<td>${(p.psPlus || []).length} / ${(p.psNormal || []).length}</td><td>${r.nbEvos || ""}</td></tr>`;
+  }).join("");
+  sEl("sTable").innerHTML = `<table class="search-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+  sEl("sMissing").textContent = listQ.length && listHits.some(h => h === 0)
+    ? "Non trouvés : " + listQ.filter((_, i) => listHits[i] === 0).join(", ") : "";
+}
+
+sEl("sTable").addEventListener("click", e => {
+  const th = e.target.closest("th");
+  if (th) {
+    const k = th.dataset.k;
+    sSort = { key: k, dir: sSort.key === k ? -sSort.dir : (SEARCH_TEXT_COLS.includes(k) ? 1 : -1) };
+    runSearch();
+    return;
+  }
+  const tr = e.target.closest("tr[data-i]");
+  if (!tr) return;
+  // ouvre le joueur dans le simulateur, avec l'evolution filtree en chaine
+  const r = sRows[parseInt(tr.dataset.i, 10)];
+  const evo = DATA.evolutions.find(x => String(x.id) === sEl("sEvo").value);
+  chain = evo ? [evo.id] : [];
+  chainChoices = evo ? [defaultChoices(evo)] : [];
+  selectPlayer(r.base);
+  document.querySelector('.tab-btn[data-tab="simulateur"]').click();
+});
+for (const id of SEARCH_INPUT_IDS) {
+  const evt = ["sEvo", "sPos", "sRarity"].includes(id) ? "change" : "input";
+  sEl(id).addEventListener(evt, () => {
+    if (id === "sEvo") sSort = { key: null, dir: -1 };
+    runSearch();
+  });
+}
+for (const id of Object.keys(MULTI_FILTERS)) {
+  const input = sEl(id);
+  // choix dans la liste deroulante (insertReplacementText), Entree, ou sortie du champ : ajoute la puce
+  input.addEventListener("input", e => { if (e.inputType === "insertReplacementText" || !e.inputType) { if (addChip(id)) runSearch(); } });
+  input.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); if (addChip(id)) runSearch(); } });
+  input.addEventListener("change", () => { if (addChip(id)) runSearch(); });
+  sEl(id + "Chips").addEventListener("click", e => {
+    const chip = e.target.closest(".chip");
+    if (!chip) return;
+    sChosen[id].splice(parseInt(chip.dataset.i, 10), 1);
+    renderChips(id);
+    runSearch();
+  });
+}
+sEl("sReset").addEventListener("click", () => {
+  for (const id of SEARCH_INPUT_IDS) sEl(id).value = "";
+  for (const id of Object.keys(MULTI_FILTERS)) { sChosen[id] = []; renderChips(id); }
+  sSort = { key: null, dir: -1 };
+  runSearch();
+});
+sEl("sCsv").addEventListener("click", () => {
+  const q = v => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  const lines = [["Nom", "Poste", "Note", "Note finale", "Gain", "Club", "Ligue", "Nation", "Rarete", "Mes evos"].join(";")];
+  for (const r of sRows) {
+    lines.push([r.p.name, r.p.pos, r.p.ovr, r.after ? r.after.ovr : "", r.after ? r.gain : "", r.p.club, r.p.league, r.p.nation, r.p.rarity, r.nbEvos].map(q).join(";"));
+  }
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob(["﻿" + lines.join("\n")], { type: "text/csv;charset=utf-8" }));
+  a.download = "recherche_joueurs.csv";
+  a.click();
 });
 
 // --- historique ("mes évolutions") ---

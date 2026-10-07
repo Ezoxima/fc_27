@@ -180,7 +180,10 @@ def select_upgrades(
 
 # colonnes ajoutees apres coup (bases creees avant les paliers)
 LEVEL_COLUMNS = {
-    "evolutions": {"levels_json": "TEXT"},
+    "evolutions": {
+        "levels_json": "TEXT",
+        "end_time": "TEXT",         # date de fin ISO (UTC) annoncee par la page detail fut.gg
+    },
     "used_evolutions": {
         "level": "INTEGER",         # paliers termines (NULL = evolution terminee)
         "max_level": "INTEGER",

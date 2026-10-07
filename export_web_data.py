@@ -102,6 +102,8 @@ def export_evolutions(conn: sqlite3.Connection) -> list[dict]:
                 "grantedPlaystyles": json.loads(e.get("granted_playstyles") or "[]"),
                 # paliers et options (Pathway) ; None = evolution sans detail de paliers
                 "levels": json.loads(e["levels_json"]) if e.get("levels_json") else None,
+                # date de fin ISO UTC (None = inconnue) ; l'affichage la formate cote navigateur
+                "endTime": e.get("end_time"),
                 "repeatabilityCount": e.get("repeatability_count") or 1,
                 "usedCount": e["used_count"],
                 "remainingUses": e["remaining_uses"],
